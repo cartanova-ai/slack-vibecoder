@@ -64,35 +64,65 @@ check_pm2_health() {
 # $1: 재시작 시점 (ISO 8601 형식)
 check_turnaround_success() {
     local restart_time="$1"
-    local restart_epoch=$(date -d "$restart_time" +%s 2>/dev/null)
+    # 재시작 시점을 UTC epoch로 변환 (타임존 정보가 있으면 그대로 사용, 없으면 UTC로 가정)
+    local restart_epoch=$(date -u -d "$restart_time" +%s 2>/dev/null || date -u -d "${restart_time}Z" +%s 2>/dev/null)
 
     if [ -z "$restart_epoch" ]; then
         echo "[$(date)] 재시작 시점 파싱 실패: $restart_time"
         return 1
     fi
 
-    # PM2 로그에서 TURNAROUND_SUCCESS 패턴을 찾음
-    local log_lines=$(pm2 logs $PM2_SERVICE_NAME --nostream --lines 100 2>/dev/null | grep "TURNAROUND_SUCCESS")
+    echo "[$(date)] 재시작 시점 (UTC epoch): $restart_epoch"
+
+    # PM2 로그 파일 직접 읽기 (버퍼링 문제 회피)
+    # PM2 로그 파일 경로: ~/.pm2/logs/{service-name}-out.log
+    local pm2_log_file="$HOME/.pm2/logs/${PM2_SERVICE_NAME}-out.log"
+    
+    # 로그 파일이 없으면 pm2 logs 명령 사용 (fallback)
+    if [ ! -f "$pm2_log_file" ]; then
+        echo "[$(date)] PM2 로그 파일을 찾을 수 없음: $pm2_log_file, pm2 logs 명령 사용"
+        local log_lines=$(pm2 logs $PM2_SERVICE_NAME --nostream --lines 200 2>/dev/null | grep "TURNAROUND_SUCCESS")
+    else
+        # 로그 파일에서 최근 200줄 읽기
+        local log_lines=$(tail -n 200 "$pm2_log_file" 2>/dev/null | grep "TURNAROUND_SUCCESS")
+    fi
 
     if [ -z "$log_lines" ]; then
+        echo "[$(date)] TURNAROUND_SUCCESS 로그를 찾을 수 없음"
         return 1
     fi
 
+    echo "[$(date)] TURNAROUND_SUCCESS 로그 발견, 타임스탬프 확인 중..."
+
     # 각 라인에서 타임스탬프를 추출하고 재시작 시점 이후인지 확인
     while IFS= read -r line; do
-        # [2025-01-15T12:34:56.789Z] 형식에서 타임스탬프 추출
-        local timestamp=$(echo "$line" | grep -oE '\[([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})[^]]*\]' | head -1 | tr -d '[]')
+        # [2025-01-15T12:34:56.789Z] 형식에서 타임스탬프 추출 (Z 포함)
+        local timestamp=$(echo "$line" | grep -oE '\[([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z)\]' | head -1 | tr -d '[]')
+        
+        # Z가 없는 경우도 처리 (밀리초 없이)
+        if [ -z "$timestamp" ]; then
+            timestamp=$(echo "$line" | grep -oE '\[([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})Z?\]' | head -1 | tr -d '[]')
+            # Z가 없으면 추가
+            if [ -n "$timestamp" ] && [[ ! "$timestamp" =~ Z$ ]]; then
+                timestamp="${timestamp}Z"
+            fi
+        fi
 
         if [ -n "$timestamp" ]; then
-            local log_epoch=$(date -d "$timestamp" +%s 2>/dev/null)
+            # UTC로 명시적으로 파싱
+            local log_epoch=$(date -u -d "$timestamp" +%s 2>/dev/null)
 
-            if [ -n "$log_epoch" ] && [ "$log_epoch" -ge "$restart_epoch" ]; then
-                echo "[$(date)] 재시작 이후 성공 로그 발견: $line"
-                return 0
+            if [ -n "$log_epoch" ]; then
+                echo "[$(date)] 로그 타임스탬프: $timestamp (UTC epoch: $log_epoch)"
+                if [ "$log_epoch" -ge "$restart_epoch" ]; then
+                    echo "[$(date)] 재시작 이후 성공 로그 발견: $line"
+                    return 0
+                fi
             fi
         fi
     done <<< "$log_lines"
 
+    echo "[$(date)] 재시작 이후 TURNAROUND_SUCCESS 로그를 찾지 못함"
     return 1
 }
 
@@ -129,9 +159,9 @@ main() {
     # 잠시 대기 (메시지가 전송될 시간)
     sleep 2
 
-    # 2. PM2 재시작 (재시작 시점 기록)
-    RESTART_TIME=$(date -Iseconds)
-    echo "[$(date)] PM2 서비스 재시작 중... (기준 시점: $RESTART_TIME)"
+    # 2. PM2 재시작 (재시작 시점 기록 - UTC로 저장하여 로그와 일치시킴)
+    RESTART_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "[$(date)] PM2 서비스 재시작 중... (기준 시점 UTC: $RESTART_TIME)"
     pm2 restart "$PM2_SERVICE_NAME"
 
     # 3. 서비스가 올라올 때까지 대기
