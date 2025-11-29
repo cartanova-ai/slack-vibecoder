@@ -31,29 +31,96 @@ if [ -z "$RESTARTER_DETACHED" ]; then
     exit 0
 fi
 
-# Slack 메시지 전송 함수
+# Slack 메시지 전송 함수 (리스타터 시스템 메시지)
 send_slack_message() {
     local message="$1"
+    # 리스타터 메시지는 [시스템] 접두사로 구분
+    local formatted_message="[시스템] $message"
+    
+    # Python을 사용하여 안전하게 JSON 이스케이프 처리
+    local json_message=$(python3 -c "import json, sys; print(json.dumps(sys.stdin.read(), ensure_ascii=False))" <<< "$formatted_message")
+    
     curl -s -X POST "https://slack.com/api/chat.postMessage" \
         -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
         -H "Content-Type: application/json" \
-        -d "{\"channel\": \"$CHANNEL_ID\", \"thread_ts\": \"$THREAD_TS\", \"text\": \"$message\"}" \
+        -d "{\"channel\": \"$CHANNEL_ID\", \"thread_ts\": \"$THREAD_TS\", \"text\": $json_message}" \
         > /dev/null
 }
 
+# PM2 헬스체크 상세 정보를 저장할 전역 변수
+HEALTH_CHECK_DETAILS=""
+
 # PM2 로그에서 최근 에러 확인 함수
+# 실패 시 HEALTH_CHECK_DETAILS에 상세 정보 저장
 check_pm2_health() {
+    HEALTH_CHECK_DETAILS=""
+    
     # PM2 상태 확인
     local status=$(pm2 jlist 2>/dev/null | grep -o "\"name\":\"$PM2_SERVICE_NAME\"[^}]*\"status\":\"[^\"]*\"" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
-
+    
+    if [ -z "$status" ]; then
+        HEALTH_CHECK_DETAILS="PM2 상태를 확인할 수 없습니다. (pm2 jlist 실패 또는 서비스 미등록)"
+        return 1
+    fi
+    
     if [ "$status" != "online" ]; then
+        # PM2 상세 정보 수집
+        local pm2_info=$(pm2 jlist 2>/dev/null | grep -A 20 "\"name\":\"$PM2_SERVICE_NAME\"" | head -30)
+        local restart_count=$(echo "$pm2_info" | grep -o "\"restart_time\":[0-9]*" | cut -d':' -f2)
+        local uptime=$(echo "$pm2_info" | grep -o "\"pm_uptime\":[0-9]*" | cut -d':' -f2)
+        local memory=$(echo "$pm2_info" | grep -o "\"memory\":[0-9]*" | cut -d':' -f2)
+        local cpu=$(echo "$pm2_info" | grep -o "\"cpu\":[0-9.]*" | cut -d':' -f2)
+        
+        HEALTH_CHECK_DETAILS="PM2 상태: $status"
+        if [ -n "$restart_count" ]; then
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n재시작 횟수: $restart_count"
+        fi
+        if [ -n "$uptime" ]; then
+            local uptime_sec=$((uptime / 1000))
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n업타임: ${uptime_sec}초"
+        fi
+        if [ -n "$memory" ]; then
+            local memory_mb=$((memory / 1024 / 1024))
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n메모리 사용량: ${memory_mb}MB"
+        fi
+        if [ -n "$cpu" ]; then
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nCPU 사용률: ${cpu}%"
+        fi
+        
+        # 최근 에러 로그 수집
+        local pm2_log_file="$HOME/.pm2/logs/${PM2_SERVICE_NAME}-err.log"
+        if [ -f "$pm2_log_file" ]; then
+            local recent_error_logs=$(tail -n 5 "$pm2_log_file" 2>/dev/null)
+            if [ -n "$recent_error_logs" ]; then
+                HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\n최근 에러 로그:\n\`\`\`\n$recent_error_logs\n\`\`\`"
+            fi
+        fi
+        
         return 1
     fi
 
-    # 최근 로그에서 치명적 에러 확인 (최근 10줄)
-    local recent_errors=$(pm2 logs $PM2_SERVICE_NAME --nostream --lines 10 2>/dev/null | grep -iE "(error|exception|fatal|crash)" | wc -l)
+    # 최근 로그에서 치명적 에러 확인 (최근 20줄)
+    local pm2_log_file="$HOME/.pm2/logs/${PM2_SERVICE_NAME}-out.log"
+    local recent_errors=""
+    
+    if [ -f "$pm2_log_file" ]; then
+        recent_errors=$(tail -n 20 "$pm2_log_file" 2>/dev/null | grep -iE "(error|exception|fatal|crash)")
+    else
+        recent_errors=$(pm2 logs $PM2_SERVICE_NAME --nostream --lines 20 2>/dev/null | grep -iE "(error|exception|fatal|crash)")
+    fi
+    
+    local error_count=$(echo "$recent_errors" | grep -v "^$" | wc -l)
 
-    if [ "$recent_errors" -gt 3 ]; then
+    if [ "$error_count" -gt 3 ]; then
+        HEALTH_CHECK_DETAILS="PM2 상태: $status (정상)"
+        HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n에러 로그 개수: $error_count개 (임계값: 3개 초과)"
+        
+        if [ -n "$recent_errors" ]; then
+            # 최근 에러 로그 일부 (최대 10줄)
+            local error_sample=$(echo "$recent_errors" | tail -n 10)
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\n최근 에러 로그 샘플:\n\`\`\`\n$error_sample\n\`\`\`"
+        fi
+        
         return 1
     fi
 
@@ -129,7 +196,15 @@ check_turnaround_success() {
 # 롤백 함수
 rollback() {
     local reason="$1"
-    send_slack_message "롤백을 시작합니다. 사유: $reason"
+    local details="$2"
+    
+    # 상세 정보가 있으면 포함하여 메시지 구성
+    local message="롤백을 시작합니다.\n\n사유: $reason"
+    if [ -n "$details" ]; then
+        message="$message\n\n상세 정보:\n$details"
+    fi
+    
+    send_slack_message "$message"
 
     cd "$PROJECT_DIR"
     git reset --hard "$SAFE_COMMIT_HASH"
@@ -142,10 +217,16 @@ rollback() {
 
     sleep 5
 
+    # 롤백 후 헬스체크
+    HEALTH_CHECK_DETAILS=""
     if check_pm2_health; then
         send_slack_message "롤백 완료! 커밋 $SAFE_COMMIT_HASH 으로 복원되었습니다."
     else
-        send_slack_message "롤백 후에도 문제가 있습니다. 수동 확인이 필요합니다."
+        local rollback_message="롤백 후에도 문제가 있습니다. 수동 확인이 필요합니다."
+        if [ -n "$HEALTH_CHECK_DETAILS" ]; then
+            rollback_message="$rollback_message\n\n상세 정보:\n$HEALTH_CHECK_DETAILS"
+        fi
+        send_slack_message "$rollback_message"
     fi
 }
 
@@ -181,7 +262,8 @@ main() {
         # PM2 상태 확인
         if ! check_pm2_health; then
             echo "[$(date)] PM2 상태 이상, 롤백 시작..."
-            rollback "헬스체크 실패 - PM2 상태 이상 또는 에러 로그 과다 감지"
+            echo "[$(date)] 헬스체크 상세 정보: $HEALTH_CHECK_DETAILS"
+            rollback "헬스체크 실패 - PM2 상태 이상 또는 에러 로그 과다 감지" "$HEALTH_CHECK_DETAILS"
             echo "[$(date)] 재시작 스크립트 종료"
             return
         fi
