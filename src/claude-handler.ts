@@ -136,8 +136,7 @@ export async function handleClaudeQuery(
     return resultText || progressText;
   } catch (error) {
     if (abortSignal.aborted) {
-      const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
-      await callbacks.onProgress("⏹️ 작업이 중단되었습니다.", undefined, elapsedSeconds, toolCallCount);
+      // 중단 시에는 아무것도 하지 않음 (stop_claude 액션에서 이미 UI 업데이트함)
       return null;
     }
 

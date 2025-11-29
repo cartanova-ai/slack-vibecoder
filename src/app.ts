@@ -281,6 +281,11 @@ app.event("app_mention", async ({ event, client, say }) => {
     await handleClaudeQuery(threadTs, userQuery, {
       // 진행 상황 업데이트
       onProgress: async (text: string, toolInfo: string | undefined, elapsedSeconds: number, toolCallCount: number) => {
+        // 세션이 삭제되었으면 (중단된 경우) 업데이트 스킵
+        if (!sessionStates.has(threadTs)) {
+          return;
+        }
+
         // 세션 상태 업데이트
         sessionState.lastText = text;
         sessionState.lastIcon = "⏳ 작업 중...";
