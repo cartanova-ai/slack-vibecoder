@@ -106,6 +106,11 @@ export async function handleClaudeQuery(
       // result 메시지 처리
       if (message.type === "result") {
         resultText = message.result || progressText;
+
+        // 세션 ID 저장 (다음 요청에서 세션 이어가기 위함)
+        if (message.session_id) {
+          sessionManager.updateClaudeSessionId(threadTs, message.session_id);
+        }
       }
     });
 
@@ -115,10 +120,6 @@ export async function handleClaudeQuery(
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
       await callbacks.onResult(finalText, { durationSeconds, toolCallCount });
     }
-
-    // 세션 ID 업데이트 (첫 번째 쿼리 후)
-    // Note: SDK에서 세션 ID를 가져오는 방법이 있다면 여기서 업데이트
-    // 현재 SDK 구조상 세션 ID는 내부적으로 관리되므로 스킵
 
     return finalText;
   } catch (error) {
