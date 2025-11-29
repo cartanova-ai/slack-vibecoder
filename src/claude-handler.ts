@@ -111,14 +111,14 @@ export async function handleClaudeQuery(
       }
     });
 
-    // 최종 결과 전송
-    const finalText = resultText || progressText;
-    if (finalText && !abortSignal.aborted) {
+    // 최종 결과 전송 (빈 텍스트라도 무조건 호출하여 UI 정리)
+    if (!abortSignal.aborted) {
+      const finalText = resultText || progressText;
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
       await callbacks.onResult(finalText, { durationSeconds, toolCallCount });
     }
 
-    return finalText;
+    return resultText || progressText;
   } catch (error) {
     if (abortSignal.aborted) {
       const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
