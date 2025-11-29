@@ -51,6 +51,18 @@ interface SessionState {
 const sessionStates = new Map<string, SessionState>();
 
 /**
+ * 슬랙 블록 텍스트를 안전한 길이로 자릅니다.
+ * 슬랙 mrkdwn 텍스트 블록 제한: 3000자
+ * 여유를 두고 2500자로 제한 (메타데이터, 태그 등 고려)
+ */
+function truncateForSlack(text: string, maxLength: number = 2500): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(0, maxLength) + "...";
+}
+
+/**
  * 메타데이터만 업데이트하는 함수 (타이머용)
  * 메시지 본문(아이콘, 텍스트)은 유지하고 시간/도구 호출 횟수만 업데이트
  */
@@ -79,9 +91,19 @@ async function updateMetadataOnly(threadTs: string): Promise<void> {
   const metadataText = `_${timeStr} 경과, 도구 ${state.lastToolCallCount}회 호출${versionInfo}_`;
 
   // 현재 메시지 상태(아이콘, 텍스트) 유지
-  const messageText = state.lastText 
-    ? `<@${state.userId}> ${state.lastIcon}\n\n${state.lastToolInfo ? `${state.lastToolInfo}\n\n` : ""}> ${state.lastText.slice(0, 2900)}${state.lastText.length > 2900 ? "..." : ""}`
-    : `<@${state.userId}> ${state.lastIcon}`;
+  const toolInfoText = state.lastToolInfo ? `${state.lastToolInfo}\n\n` : "";
+  const userTag = `<@${state.userId}> ${state.lastIcon}`;
+  
+  let messageText: string;
+  if (state.lastText) {
+    // 메타데이터, 사용자 태그, 툴 정보를 제외한 나머지 공간 계산
+    const overhead = userTag.length + toolInfoText.length + 10; // \n\n, >, 여유분
+    const maxTextLength = 2500 - overhead;
+    const truncatedText = truncateForSlack(state.lastText, maxTextLength);
+    messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
+  } else {
+    messageText = userTag;
+  }
 
   const progressBlocks = [
     {
@@ -311,6 +333,14 @@ app.event("app_mention", async ({ event, client, say }) => {
         const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
         const metadataText = `_${timeStr} 경과, 도구 ${toolCallCount}회 호출${versionInfo}_`;
 
+        // 메시지 텍스트 구성 (슬랙 길이 제한 고려)
+        const toolInfoText = toolInfo ? `${toolInfo}\n\n` : "";
+        const userTag = `<@${userId}> ⏳ 작업 중...`;
+        const overhead = userTag.length + toolInfoText.length + 10;
+        const maxTextLength = 2500 - overhead;
+        const truncatedText = truncateForSlack(text, maxTextLength);
+        const messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
+
         const progressBlocks = [
           {
             type: "context",
@@ -325,7 +355,7 @@ app.event("app_mention", async ({ event, client, say }) => {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `<@${userId}> ⏳ 작업 중...\n\n${toolInfo ? `${toolInfo}\n\n` : ""}> ${text.slice(0, 2900)}${text.length > 2900 ? "..." : ""}`,
+              text: messageText,
             },
           },
           {
@@ -384,10 +414,17 @@ app.event("app_mention", async ({ event, client, say }) => {
         const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
         const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
 
+        // 최종 메시지 텍스트 구성 (슬랙 길이 제한 고려)
+        const userTag = `<@${userId}>`;
+        const overhead = userTag.length + 10;
+        const maxTextLength = 2500 - overhead;
+        const truncatedText = truncateForSlack(text, maxTextLength);
+        const finalMessageText = `${userTag}\n\n${truncatedText}`;
+
         await client.chat.update({
           channel,
           ts: responseTs,
-          text: `<@${userId}> ${text}`,
+          text: `<@${userId}> ${text.slice(0, 100)}...`, // fallback text (알림용)
           blocks: [
             {
               type: "context",
@@ -402,7 +439,7 @@ app.event("app_mention", async ({ event, client, say }) => {
               type: "section",
               text: {
                 type: "mrkdwn",
-                text: `<@${userId}>\n\n${text.slice(0, 2900)}${text.length > 2900 ? "..." : ""}`,
+                text: finalMessageText,
               },
             },
           ],
