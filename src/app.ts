@@ -11,9 +11,11 @@
 import "dotenv/config";
 import { App, BlockAction, ButtonAction } from "@slack/bolt";
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { handleClaudeQuery, abortSession } from "./claude-handler";
 import { sessionManager } from "./session-manager";
-import { setAppStartCommitHash } from "./app-info";
+import { setAppStartCommitHash, setAppVersion, getAppVersion, getAppStartCommitHash } from "./app-info";
 
 // 환경 변수 확인
 const requiredEnvVars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -137,7 +139,21 @@ app.event("app_mention", async ({ event, client, say }) => {
         const minutes = Math.floor(summary.durationSeconds / 60);
         const seconds = summary.durationSeconds % 60;
         const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
-        const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출_`;
+        
+        // 버전과 커밋 해시 정보 구성
+        const version = getAppVersion();
+        const commitHash = getAppStartCommitHash();
+        const versionInfoParts: string[] = [];
+        
+        if (version) {
+          versionInfoParts.push(`v${version}`);
+        }
+        if (commitHash) {
+          versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+        }
+        
+        const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+        const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
 
         await client.chat.update({
           channel,
@@ -246,9 +262,10 @@ setInterval(() => {
 
 // 앱 시작
 (async () => {
+  const projectDir = process.env.PROJECT_DIR || process.cwd();
+  
   // 앱 시작 시점의 커밋 해시 저장
   try {
-    const projectDir = process.env.PROJECT_DIR || process.cwd();
     const commitHash = execSync("git rev-parse HEAD", { 
       cwd: projectDir,
       encoding: "utf-8" 
@@ -257,6 +274,18 @@ setInterval(() => {
     console.log(`📌 앱 시작 시점 커밋 해시: ${commitHash}`);
   } catch (error) {
     console.warn("⚠️ 커밋 해시를 가져오지 못했습니다:", error);
+  }
+
+  // 앱 버전 저장
+  try {
+    const packageJsonPath = join(projectDir, "package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+    if (packageJson.version) {
+      setAppVersion(packageJson.version);
+      console.log(`📦 앱 버전: v${packageJson.version}`);
+    }
+  } catch (error) {
+    console.warn("⚠️ 버전을 가져오지 못했습니다:", error);
   }
 
   const port = parseInt(process.env.PORT || "3000", 10);
