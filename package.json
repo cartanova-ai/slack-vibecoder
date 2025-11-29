@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "tsx src/app.ts",
+    "dev": "tsx watch src/app.ts",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
@@ -17,7 +19,9 @@
   "license": "ISC",
   "packageManager": "pnpm@10.23.0",
   "dependencies": {
-    "@instantlyeasy/claude-code-sdk-ts": "^0.3.3"
+    "@instantlyeasy/claude-code-sdk-ts": "^0.3.3",
+    "@slack/bolt": "^4.6.0",
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
