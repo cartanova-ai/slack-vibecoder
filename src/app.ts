@@ -35,6 +35,99 @@ const app = new App({
 // 진행 중인 메시지 추적 (channel:ts -> message_ts)
 const activeMessages = new Map<string, string>();
 
+// 세션별 메타데이터 업데이트 타이머 및 상태 추적
+interface SessionState {
+  startTime: number;
+  timerId: NodeJS.Timeout | null;
+  lastText: string;
+  lastToolInfo: string | undefined;
+  lastToolCallCount: number;
+  channel: string;
+  responseTs?: string; // optional로 변경
+  userId: string;
+}
+
+const sessionStates = new Map<string, SessionState>();
+
+/**
+ * 메타데이터만 업데이트하는 함수 (타이머용)
+ */
+async function updateMetadataOnly(threadTs: string): Promise<void> {
+  const state = sessionStates.get(threadTs);
+  if (!state || !state.responseTs) return;
+
+  const responseTs = state.responseTs; // 타입 가드를 위한 변수 추출
+  const elapsedSeconds = Math.round((Date.now() - state.startTime) / 1000);
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+  
+  const version = getAppVersion();
+  const commitHash = getAppStartCommitHash();
+  const versionInfoParts: string[] = [];
+  
+  if (version) {
+    versionInfoParts.push(`v${version}`);
+  }
+  if (commitHash) {
+    versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+  }
+  
+  const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+  const metadataText = `_${timeStr} 경과, 도구 ${state.lastToolCallCount}회 호출${versionInfo}_`;
+
+  const progressBlocks = [
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: metadataText,
+        },
+      ],
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `<@${state.userId}> ⏳ 작업 중...\n\n${state.lastToolInfo ? `${state.lastToolInfo}\n\n` : ""}> ${state.lastText.slice(0, 2900)}${state.lastText.length > 2900 ? "..." : ""}`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "🛑 멈춰!",
+            emoji: true,
+          },
+          action_id: "stop_claude",
+          value: threadTs,
+        },
+      ],
+    },
+  ];
+
+  try {
+    await app.client.chat.update({
+      channel: state.channel,
+      ts: responseTs,
+      text: `<@${state.userId}> 작업 중...`,
+      blocks: progressBlocks,
+    });
+  } catch (error) {
+    // 업데이트 실패 시 타이머 정리
+    console.warn(`메타데이터 업데이트 실패 (스레드: ${threadTs}):`, error);
+    const sessionState = sessionStates.get(threadTs);
+    if (sessionState?.timerId) {
+      clearInterval(sessionState.timerId);
+      sessionState.timerId = null;
+    }
+  }
+}
+
 /**
  * 멘션 이벤트 핸들러
  */
@@ -116,15 +209,46 @@ app.event("app_mention", async ({ event, client, say }) => {
     ],
   });
 
-  const responseTs = initialMessage.ts!;
+  const responseTsRaw = initialMessage.ts;
+  if (!responseTsRaw) {
+    console.error("응답 메시지 타임스탬프를 가져올 수 없습니다.");
+    return;
+  }
+  // 타입 단언: 위에서 체크했으므로 string임이 보장됨
+  const responseTs: string = responseTsRaw;
+
   const messageKey = `${channel}:${threadTs}`;
   activeMessages.set(messageKey, responseTs);
+
+  // 세션 상태 초기화 및 타이머 시작
+  const startTime = Date.now();
+  const sessionState: SessionState = {
+    startTime,
+    timerId: null,
+    lastText: "",
+    lastToolInfo: undefined,
+    lastToolCallCount: 0,
+    channel,
+    responseTs,
+    userId,
+  };
+  sessionStates.set(threadTs, sessionState);
+
+  // 매초 메타데이터 업데이트 타이머 시작
+  sessionState.timerId = setInterval(() => {
+    updateMetadataOnly(threadTs);
+  }, 1000);
 
   // Claude 처리
   try {
     await handleClaudeQuery(threadTs, userQuery, {
       // 진행 상황 업데이트
       onProgress: async (text, toolInfo, elapsedSeconds, toolCallCount) => {
+        // 세션 상태 업데이트
+        sessionState.lastText = text;
+        sessionState.lastToolInfo = toolInfo;
+        sessionState.lastToolCallCount = toolCallCount;
+
         // 메타데이터 구성
         const minutes = Math.floor(elapsedSeconds / 60);
         const seconds = elapsedSeconds % 60;
@@ -178,6 +302,7 @@ app.event("app_mention", async ({ event, client, say }) => {
           },
         ];
 
+        // 즉시 업데이트 (이벤트 반영)
         await client.chat.update({
           channel,
           ts: responseTs,
@@ -232,12 +357,27 @@ app.event("app_mention", async ({ event, client, say }) => {
         });
         activeMessages.delete(messageKey);
 
+        // 타이머 정리
+        const sessionState = sessionStates.get(threadTs);
+        if (sessionState?.timerId) {
+          clearInterval(sessionState.timerId);
+          sessionState.timerId = null;
+        }
+        sessionStates.delete(threadTs);
+
         // 성공적인 턴어라운드 로그 (restarter.sh가 감지하는 용도)
         console.log(`[${new Date().toISOString()}] ✅ TURNAROUND_SUCCESS: 스레드 ${threadTs} 완료 (${timeStr}, 도구 ${summary.toolCallCount}회)`);
       },
 
       // 에러 처리
       onError: async (error) => {
+        // 타이머 정리
+        const sessionState = sessionStates.get(threadTs);
+        if (sessionState?.timerId) {
+          clearInterval(sessionState.timerId);
+          sessionState.timerId = null;
+        }
+        sessionStates.delete(threadTs);
         await client.chat.update({
           channel,
           ts: responseTs,
@@ -258,6 +398,14 @@ app.event("app_mention", async ({ event, client, say }) => {
   } catch (error) {
     console.error("Claude 처리 중 오류:", error);
     activeMessages.delete(messageKey);
+    
+    // 타이머 정리
+    const sessionState = sessionStates.get(threadTs);
+    if (sessionState?.timerId) {
+      clearInterval(sessionState.timerId);
+      sessionState.timerId = null;
+    }
+    sessionStates.delete(threadTs);
   }
 });
 
@@ -278,6 +426,14 @@ app.action<BlockAction<ButtonAction>>("stop_claude", async ({ body, ack, client 
   }
 
   console.log(`🛑 중단 요청: 스레드 ${threadTs}`);
+
+  // 타이머 정리
+  const sessionState = sessionStates.get(threadTs);
+  if (sessionState?.timerId) {
+    clearInterval(sessionState.timerId);
+    sessionState.timerId = null;
+  }
+  sessionStates.delete(threadTs);
 
   // 세션 중단
   const aborted = abortSession(threadTs);
