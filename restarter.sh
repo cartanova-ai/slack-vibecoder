@@ -37,7 +37,8 @@ send_slack_message() {
     # 리스타터 메시지는 [시스템] 접두사로 구분
     local formatted_message="[시스템] $message"
     
-    # Python을 사용하여 안전하게 JSON 이스케이프 처리
+    # Python을 사용하여 안전하게 JSON 이스케이프 처리 (줄바꿈 유지)
+    # Slack API는 text 필드에서 \n을 줄바꿈으로 인식함
     local json_message=$(python3 -c "import json, sys; print(json.dumps(sys.stdin.read(), ensure_ascii=False))" <<< "$formatted_message")
     
     curl -s -X POST "https://slack.com/api/chat.postMessage" \
@@ -55,23 +56,50 @@ HEALTH_CHECK_DETAILS=""
 check_pm2_health() {
     HEALTH_CHECK_DETAILS=""
     
-    # PM2 상태 확인
-    local status=$(pm2 jlist 2>/dev/null | grep -o "\"name\":\"$PM2_SERVICE_NAME\"[^}]*\"status\":\"[^\"]*\"" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
+    # PM2 상태 확인 (명령 실행 결과와 에러 수집)
+    local pm2_output
+    local pm2_exit_code
+    local pm2_stderr
+    
+    # stdout과 stderr를 분리하여 캡처
+    pm2_output=$(pm2 jlist 2>/tmp/pm2_stderr.tmp)
+    pm2_exit_code=$?
+    pm2_stderr=$(cat /tmp/pm2_stderr.tmp 2>/dev/null)
+    rm -f /tmp/pm2_stderr.tmp
+    
+    local status=$(echo "$pm2_output" | grep -o "\"name\":\"$PM2_SERVICE_NAME\"[^}]*\"status\":\"[^\"]*\"" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
     
     if [ -z "$status" ]; then
-        HEALTH_CHECK_DETAILS="PM2 상태를 확인할 수 없습니다. (pm2 jlist 실패 또는 서비스 미등록)"
+        HEALTH_CHECK_DETAILS="PM2 상태를 확인할 수 없습니다."
+        HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\n실행 명령: pm2 jlist"
+        HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nExit code: $pm2_exit_code"
+        
+        if [ -n "$pm2_stderr" ]; then
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nstderr:\n\`\`\`\n$pm2_stderr\n\`\`\`"
+        fi
+        
+        if [ -n "$pm2_output" ]; then
+            # 출력이 있지만 서비스를 찾지 못한 경우
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nstdout (일부):\n\`\`\`\n$(echo "$pm2_output" | head -20)\n\`\`\`"
+        else
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nstdout: (비어있음)"
+        fi
+        
         return 1
     fi
     
     if [ "$status" != "online" ]; then
         # PM2 상세 정보 수집
-        local pm2_info=$(pm2 jlist 2>/dev/null | grep -A 20 "\"name\":\"$PM2_SERVICE_NAME\"" | head -30)
+        local pm2_info=$(echo "$pm2_output" | grep -A 20 "\"name\":\"$PM2_SERVICE_NAME\"" | head -30)
         local restart_count=$(echo "$pm2_info" | grep -o "\"restart_time\":[0-9]*" | cut -d':' -f2)
         local uptime=$(echo "$pm2_info" | grep -o "\"pm_uptime\":[0-9]*" | cut -d':' -f2)
         local memory=$(echo "$pm2_info" | grep -o "\"memory\":[0-9]*" | cut -d':' -f2)
         local cpu=$(echo "$pm2_info" | grep -o "\"cpu\":[0-9.]*" | cut -d':' -f2)
         
-        HEALTH_CHECK_DETAILS="PM2 상태: $status"
+        HEALTH_CHECK_DETAILS="PM2 상태: $status (정상이 아님)"
+        HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\n실행 명령: pm2 jlist"
+        HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nExit code: $pm2_exit_code"
+        
         if [ -n "$restart_count" ]; then
             HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n재시작 횟수: $restart_count"
         fi
@@ -85,6 +113,14 @@ check_pm2_health() {
         fi
         if [ -n "$cpu" ]; then
             HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\nCPU 사용률: ${cpu}%"
+        fi
+        
+        if [ -n "$pm2_stderr" ]; then
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\nstderr:\n\`\`\`\n$pm2_stderr\n\`\`\`"
+        fi
+        
+        if [ -n "$pm2_info" ]; then
+            HEALTH_CHECK_DETAILS="$HEALTH_CHECK_DETAILS\n\nPM2 정보 (일부):\n\`\`\`\n$pm2_info\n\`\`\`"
         fi
         
         return 1
