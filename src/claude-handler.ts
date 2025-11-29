@@ -3,12 +3,9 @@
  * 슬랙 메시지를 받아 Claude에 전달하고 응답을 스트리밍합니다.
  */
 
-import { claude } from "@instantlyeasy/claude-code-sdk-ts";
+import { claude, type Message, type ContentBlock } from "@instantlyeasy/claude-code-sdk-ts";
 import { sessionManager } from "./session-manager";
 import { buildPrompt } from "./prompts";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ClaudeMessage = any;
 
 interface ExecutionSummary {
   durationSeconds: number;
@@ -70,27 +67,32 @@ export async function handleClaudeQuery(
 
     // 기존 세션이 있으면 이어서 대화
     if (session.claudeSessionId) {
+      console.log(`[${new Date().toISOString()}] 🔄 기존 세션 ID 사용: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`);
       claudeBuilder = claudeBuilder.withSessionId(session.claudeSessionId);
+    } else {
+      console.log(`[${new Date().toISOString()}] 🆕 새 세션 시작 (스레드: ${threadTs})`);
     }
 
     const prompt = buildPrompt(userQuery, threadTs, channelId, responseTs, isInThread);
 
-    await claudeBuilder.query(prompt).stream(async (message: ClaudeMessage) => {
+    await claudeBuilder.query(prompt).stream(async (message: Message) => {
       // 중단 체크
       if (abortSignal.aborted) {
         return;
       }
 
+      // 세션 ID는 모든 메시지에서 올 수 있으므로 항상 확인
+      if (message.session_id && !session.claudeSessionId) {
+        console.log(`[${new Date().toISOString()}] 📌 세션 ID 저장: ${message.session_id.substring(0, 12)}... (스레드: ${threadTs})`);
+        sessionManager.updateClaudeSessionId(threadTs, message.session_id);
+      }
+
       // assistant 메시지에서 텍스트 추출
-      if (
-        message.type === "assistant" &&
-        message.content &&
-        message.content.length > 0
-      ) {
+      if (message.type === "assistant") {
         const textContent = message.content.find(
-          (c: { type: string; text?: string }) => c.type === "text"
+          (c: ContentBlock): c is ContentBlock & { type: 'text'; text: string } => c.type === "text"
         );
-        if (textContent && textContent.text) {
+        if (textContent) {
           progressText = textContent.text;
 
           // 스로틀링: 너무 자주 업데이트하지 않음
@@ -105,12 +107,7 @@ export async function handleClaudeQuery(
 
       // result 메시지 처리
       if (message.type === "result") {
-        resultText = message.result || progressText;
-
-        // 세션 ID 저장 (다음 요청에서 세션 이어가기 위함)
-        if (message.session_id) {
-          sessionManager.updateClaudeSessionId(threadTs, message.session_id);
-        }
+        resultText = message.content || progressText;
       }
     });
 

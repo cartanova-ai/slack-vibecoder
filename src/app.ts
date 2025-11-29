@@ -138,46 +138,16 @@ app.event("app_mention", async ({ event, client, say }) => {
   // 스레드 안에서 멘션한 경우에만 스레드로 답장, 아니면 채널에 직접 답장
   const isInThread = !!event.thread_ts;
   
-  // 세션 키 결정: 봇의 응답 메시지에 스레드로 멘션한 경우, 원래 스레드 루트를 찾아야 함
-  let threadTs: string;
-  if (isInThread) {
-    // 스레드 안에서 멘션한 경우
-    // 봇의 응답 메시지에 스레드로 멘션한 경우를 확인
-    // activeMessages에서 이 thread_ts가 봇의 응답 메시지인지 확인
-    const possibleResponseTs = event.thread_ts!; // isInThread가 true이므로 항상 존재
-    let foundOriginalThreadTs: string | undefined;
-    
-    // activeMessages를 순회하여 이 responseTs가 어느 원래 threadTs에 속하는지 찾기
-    // 채널도 함께 확인하여 더 정확하게 매칭
-    for (const [key, storedResponseTs] of activeMessages.entries()) {
-      if (storedResponseTs === possibleResponseTs) {
-        // key 형식: "channel:threadTs"
-        const [storedChannel, storedThreadTs] = key.split(':');
-        if (storedChannel === channel) {
-          foundOriginalThreadTs = storedThreadTs;
-          break;
-        }
-      }
-    }
-    
-    if (foundOriginalThreadTs) {
-      // 봇의 응답 메시지에 스레드로 멘션한 경우: 원래 스레드 루트 사용
-      threadTs = foundOriginalThreadTs;
-    } else {
-      // 일반적인 스레드 안에서 멘션한 경우: 스레드 루트 사용
-      threadTs = possibleResponseTs;
-    }
-  } else {
-    // 채널 루트에서 멘션한 경우: 메시지 타임스탬프를 세션 키로 사용
-    threadTs = messageTs;
-  }
+  // 세션 키 결정: 스레드 안에서 멘션한 경우 해당 스레드 루트 사용
+  // (세션 키는 나중에 봇의 응답 메시지 타임스탬프로 전환됨)
+  const initialThreadTs: string = event.thread_ts || messageTs;
 
   // 멘션에서 봇 태그 제거하고 실제 메시지 추출
   const botMentionRegex = /<@[A-Z0-9]+>/g;
   const userQuery = event.text.replace(botMentionRegex, "").trim();
 
   if (!userQuery) {
-    // threadTs는 세션 키이고, 실제 Slack API의 thread_ts는 event.thread_ts를 사용해야 함
+    // Slack API의 thread_ts는 event.thread_ts를 사용
     const slackThreadTs = isInThread ? event.thread_ts : undefined;
     await say({
       text: `<@${userId}> 무엇을 도와드릴까요? 메시지를 함께 보내주세요!`,
@@ -186,7 +156,7 @@ app.event("app_mention", async ({ event, client, say }) => {
     return;
   }
 
-  console.log(`[${new Date().toISOString()}] 📩 멘션 수신: ${userQuery} (스레드: ${threadTs})`);
+  console.log(`[${new Date().toISOString()}] 📩 멘션 수신: ${userQuery} (초기 스레드: ${initialThreadTs})`);
 
   // 메타데이터 구성
   const version = getAppVersion();
@@ -205,7 +175,6 @@ app.event("app_mention", async ({ event, client, say }) => {
 
   // 초기 메시지 전송 (진행 중 상태 + 멈춰 버튼)
   // 스레드 안이면 스레드로, 아니면 채널에 직접
-  // 주의: threadTs는 세션 키이고, 실제 Slack API의 thread_ts는 event.thread_ts를 사용해야 함
   const slackThreadTs = isInThread ? event.thread_ts : undefined;
   const initialMessage = await client.chat.postMessage({
     channel,
@@ -239,7 +208,7 @@ app.event("app_mention", async ({ event, client, say }) => {
               emoji: true,
             },
             action_id: "stop_claude",
-            value: threadTs,
+            value: initialThreadTs, // 나중에 responseTs로 대체됨
           },
         ],
       },
@@ -253,6 +222,12 @@ app.event("app_mention", async ({ event, client, say }) => {
   }
   // 타입 단언: 위에서 체크했으므로 string임이 보장됨
   const responseTs: string = responseTsRaw;
+
+  // 세션 키는 봇의 응답 메시지 타임스탬프 사용
+  // 이렇게 해야 나중에 사용자가 봇 응답에 스레드로 멘션할 때 세션이 연결됨
+  const threadTs = responseTs;
+  
+  console.log(`[${new Date().toISOString()}] 🤖 봇 응답 생성: ${responseTs}, 세션 키: ${threadTs}`);
 
   const messageKey = `${channel}:${threadTs}`;
   activeMessages.set(messageKey, responseTs);
