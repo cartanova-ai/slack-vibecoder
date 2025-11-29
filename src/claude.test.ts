@@ -32,15 +32,12 @@ describe("Claude SDK 실제 통합 테스트", () => {
     console.log("\n✅ 응답:", response);
   }, 60000); // 60초 타임아웃
 
-  it.only("스트리밍 응답을 실시간으로 받을 수 있다", async () => {
+  it("스트리밍 응답을 실시간으로 받을 수 있다", async () => {
     const chunks: string[] = [];
     let chunkCount = 0;
 
     console.log("\n📡 스트리밍 응답:");
-    await (
-      await claude().withRolesFile("./roles.yaml")
-    )
-      .withRole("developer")
+    await claude()
       .query(
         "/Users/potados/Projects/sonamu에 가서 현재 변경된 내용들이 무엇이고 왜 변경되었는지 설명해줘."
       )
@@ -124,4 +121,59 @@ describe("Claude SDK 실제 통합 테스트", () => {
     expect(response.length).toBeGreaterThan(50); // 충분히 긴 응답
     console.log(`\n✅ 총 ${updateCount}번 업데이트, ${response.length}자 응답`);
   }, 60000);
+
+  it.only("Slack MCP 서버를 사용하여 Slack 작업을 수행할 수 있다", async () => {
+    const slackBotToken = process.env.SLACK_BOT_TOKEN;
+    const slackTeamId = process.env.SLACK_TEAM_ID;
+
+    if (!slackBotToken || !slackTeamId) {
+      console.warn(
+        "\n⚠️  SLACK_BOT_TOKEN과 SLACK_TEAM_ID 환경 변수가 설정되지 않아 테스트를 건너뜁니다."
+      );
+      console.log(
+        "사용법: SLACK_BOT_TOKEN=xoxb-... SLACK_TEAM_ID=T0000000000 pnpm test:integration"
+      );
+      return;
+    }
+
+    let response = "";
+    let toolUseCount = 0;
+
+    console.log("\n📡 Slack MCP 테스트 시작...\n");
+
+    await claude()
+      .skipPermissions()
+      .onToolUse((tool) => {
+        toolUseCount++;
+        console.log(`\n🔧 Tool 사용: ${tool.name}`);
+        if (tool.input) {
+          console.log(`   입력:`, JSON.stringify(tool.input, null, 2));
+        }
+      })
+      .query("Slack에서 내가 속한 채널 목록을 보여줘. 최대 5개만.")
+      .stream(async (message) => {
+        // 응답 텍스트 수집
+        if (
+          message.type === "assistant" &&
+          message.content &&
+          message.content.length > 0
+        ) {
+          const textContent = message.content.find(
+            (c: any) => c.type === "text"
+          ) as any;
+          if (textContent && "text" in textContent) {
+            response = textContent.text;
+            process.stdout.write(textContent.text);
+          }
+        }
+      });
+
+    console.log("\n");
+
+    expect(response.length).toBeGreaterThan(0);
+    console.log(`\n✅ 응답 길이: ${response.length}자`);
+    if (toolUseCount > 0) {
+      console.log(`✅ 사용된 Tool 수: ${toolUseCount}개`);
+    }
+  }, 120000); // 120초 타임아웃 (MCP 서버 초기화 시간 고려)
 });

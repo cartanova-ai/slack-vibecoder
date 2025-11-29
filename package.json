@@ -8,7 +8,9 @@
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
     "test:integration": "vitest src/claude.test.ts --run",
-    "test:claude": "tsx src/test-claude.ts"
+    "test:claude": "tsx src/test-claude.ts",
+    "test:slack-mcp": "tsx src/test-slack-mcp.ts",
+    "test:slack-mcp:direct": "tsx src/test-slack-mcp.ts direct"
   },
   "keywords": [],
   "author": "",
