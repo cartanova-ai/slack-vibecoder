@@ -10,8 +10,10 @@
 
 import "dotenv/config";
 import { App, BlockAction, ButtonAction } from "@slack/bolt";
+import { execSync } from "child_process";
 import { handleClaudeQuery, abortSession } from "./claude-handler";
 import { sessionManager } from "./session-manager";
+import { setAppStartCommitHash } from "./app-info";
 
 // 환경 변수 확인
 const requiredEnvVars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -244,6 +246,19 @@ setInterval(() => {
 
 // 앱 시작
 (async () => {
+  // 앱 시작 시점의 커밋 해시 저장
+  try {
+    const projectDir = process.env.PROJECT_DIR || process.cwd();
+    const commitHash = execSync("git rev-parse HEAD", { 
+      cwd: projectDir,
+      encoding: "utf-8" 
+    }).trim();
+    setAppStartCommitHash(commitHash);
+    console.log(`📌 앱 시작 시점 커밋 해시: ${commitHash}`);
+  } catch (error) {
+    console.warn("⚠️ 커밋 해시를 가져오지 못했습니다:", error);
+  }
+
   const port = parseInt(process.env.PORT || "3000", 10);
   await app.start(port);
 

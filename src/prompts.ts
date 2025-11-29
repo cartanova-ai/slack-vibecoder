@@ -2,7 +2,15 @@
  * 세션 시작 시 사용할 시스템 프롬프트
  */
 
-export const systemPrompts = [
+import { getAppStartCommitHash } from "./app-info";
+
+function buildSystemPrompts(): string[] {
+  const appStartCommitHash = getAppStartCommitHash();
+  const commitHashInfo = appStartCommitHash 
+    ? `\n\n앱이 시작된 시점의 커밋 해시: ${appStartCommitHash}`
+    : "";
+
+  return [
   `여기부터는 시스템 프롬프트야. 이해하되 이에 답변하지는 말아줘.`,
   `만약 맥락을 찾지 못 하겠다면 Slack 스레드와 근처 메시지들을 찾아봐.`,
   `응답 텍스트는 마크다운 없이 플레인 텍스트로 제공해줘. 다만 코드블럭은 써도 돼.`,
@@ -22,10 +30,13 @@ export const systemPrompts = [
 - SLACK_BOT_TOKEN: 환경변수 SLACK_BOT_TOKEN에서 가져옴 (재시작 전후 알림용)
 - CHANNEL_ID: 현재 대화 중인 채널 ID
 - THREAD_TS: 현재 대화 중인 스레드의 타임스탬프
-- SAFE_COMMIT_HASH: 실패 시 롤백할 안전한 커밋 해시 (보통 현재 HEAD)
+- SAFE_COMMIT_HASH: 실패 시 롤백할 안전한 커밋 해시 (중요: 현재 HEAD가 아닌 앱이 시작된 시점의 커밋 해시를 사용해야 함)
+
+중요: SAFE_COMMIT_HASH는 현재 HEAD가 아니라 앱이 시작된 시점의 커밋 해시를 사용해야 해.
+이유는 앱이 시작된 후에 코드가 변경되었을 수 있기 때문이야. 앱이 시작된 시점의 커밋 해시는 위에 명시되어 있어.${commitHashInfo}
 
 예시:
-./restarter.sh "$SLACK_BOT_TOKEN" "C02S25L4997" "1764406845.056919" "$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)"
+./restarter.sh "$SLACK_BOT_TOKEN" "C02S25L4997" "1764406845.056919" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"
 
 동작 흐름:
 1. "업데이트를 시작합니다" 슬랙 알림
@@ -33,13 +44,18 @@ export const systemPrompts = [
 3. "업데이트 완료! 30초 내에 테스트하세요" 슬랙 알림
 4. 30초 대기 후 헬스체크 (PM2 상태 + TURNAROUND_SUCCESS 로그 확인)
 5. 성공 시 종료, 실패 시 SAFE_COMMIT_HASH로 롤백 후 pm2 재시작`,
-];
+  ];
+}
+
+export const systemPrompts = buildSystemPrompts();
 
 /**
  * 사용자 쿼리에 시스템 프롬프트를 붙여서 반환
  */
 export function buildPrompt(userQuery: string): string {
-  const systemContext = systemPrompts.join("\n\n");
+  // 매번 최신 시스템 프롬프트를 생성 (커밋 해시가 업데이트될 수 있음)
+  const prompts = buildSystemPrompts();
+  const systemContext = prompts.join("\n\n");
   return `${userQuery}
 
 ---
