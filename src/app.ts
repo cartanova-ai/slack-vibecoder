@@ -60,6 +60,21 @@ app.event("app_mention", async ({ event, client, say }) => {
 
   console.log(`[${new Date().toISOString()}] 📩 멘션 수신: ${userQuery} (스레드: ${threadTs})`);
 
+  // 메타데이터 구성
+  const version = getAppVersion();
+  const commitHash = getAppStartCommitHash();
+  const versionInfoParts: string[] = [];
+  
+  if (version) {
+    versionInfoParts.push(`v${version}`);
+  }
+  if (commitHash) {
+    versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+  }
+  
+  const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+  const initialMetadataText = `_0초 경과, 도구 0회 호출${versionInfo}_`;
+
   // 초기 메시지 전송 (진행 중 상태 + 멈춰 버튼)
   // 스레드 안이면 스레드로, 아니면 채널에 직접
   const initialMessage = await client.chat.postMessage({
@@ -67,6 +82,15 @@ app.event("app_mention", async ({ event, client, say }) => {
     ...(isInThread && { thread_ts: threadTs }),
     text: `<@${userId}> 🤔 생각하는 중...`,
     blocks: [
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: initialMetadataText,
+          },
+        ],
+      },
       {
         type: "section",
         text: {
@@ -100,8 +124,36 @@ app.event("app_mention", async ({ event, client, say }) => {
   try {
     await handleClaudeQuery(threadTs, userQuery, {
       // 진행 상황 업데이트
-      onProgress: async (text, toolInfo) => {
+      onProgress: async (text, toolInfo, elapsedSeconds, toolCallCount) => {
+        // 메타데이터 구성
+        const minutes = Math.floor(elapsedSeconds / 60);
+        const seconds = elapsedSeconds % 60;
+        const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+        
+        const version = getAppVersion();
+        const commitHash = getAppStartCommitHash();
+        const versionInfoParts: string[] = [];
+        
+        if (version) {
+          versionInfoParts.push(`v${version}`);
+        }
+        if (commitHash) {
+          versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+        }
+        
+        const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+        const metadataText = `_${timeStr} 경과, 도구 ${toolCallCount}회 호출${versionInfo}_`;
+
         const progressBlocks = [
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: metadataText,
+              },
+            ],
+          },
           {
             type: "section",
             text: {

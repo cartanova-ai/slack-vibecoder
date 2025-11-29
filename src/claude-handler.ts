@@ -16,7 +16,7 @@ interface ExecutionSummary {
 }
 
 interface StreamCallbacks {
-  onProgress: (text: string, toolInfo?: string) => Promise<void>;
+  onProgress: (text: string, toolInfo: string | undefined, elapsedSeconds: number, toolCallCount: number) => Promise<void>;
   onResult: (text: string, summary: ExecutionSummary) => Promise<void>;
   onError: (error: Error) => Promise<void>;
 }
@@ -94,7 +94,8 @@ export async function handleClaudeQuery(
           const now = Date.now();
           if (now - lastUpdateTime > UPDATE_INTERVAL) {
             lastUpdateTime = now;
-            await callbacks.onProgress(progressText, currentToolInfo);
+            const elapsedSeconds = Math.round((now - startTime) / 1000);
+            await callbacks.onProgress(progressText, currentToolInfo, elapsedSeconds, toolCallCount);
           }
         }
       }
@@ -119,7 +120,8 @@ export async function handleClaudeQuery(
     return finalText;
   } catch (error) {
     if (abortSignal.aborted) {
-      await callbacks.onProgress("⏹️ 작업이 중단되었습니다.", "");
+      const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
+      await callbacks.onProgress("⏹️ 작업이 중단되었습니다.", undefined, elapsedSeconds, toolCallCount);
       return null;
     }
 
