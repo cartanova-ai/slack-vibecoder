@@ -18,7 +18,8 @@ function buildSystemPrompts(threadTs?: string, channelId?: string, responseTs?: 
 - 사용자가 명시적으로 지칭하지 않는 경우에는 사용자가 말하는 대상이 slack-vibecoder라고 단정해서는 안 됩니다.
 - 사용자는 당신이 범용 도구라고 생각하지, slack-vibecoder 디렉토리에서 실행되고 있다고 예상하지 않습니다.
 - 현재 작업 디렉토리(cwd)는 Slack 봇 애플리케이션 디렉토리 내부일 수 있으므로, 프롬프트를 보고 어떤 저장소를 의미하는지 파악해야 합니다.
-- 모든 git 저장소는 ~/Projects 디렉토리 내부에 있습니다`,
+- 모든 git 저장소는 ~/Projects 디렉토리 내부에 있습니다
+- 저장소를 클론할 때는 반드시 SSH 프로토콜을 사용하세요 (예: git clone git@github.com:user/repo.git)`,
 
     `=== 응답 형식 ===
 - 응답 텍스트는 마크다운 없이 플레인 텍스트로 제공하세요.
