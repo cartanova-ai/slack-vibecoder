@@ -57,13 +57,16 @@ slack-vibecoder 프로젝트에 변경사항을 커밋하고 푸시할 때는 �
 - 특징: 부모 프로세스(Claude Code)가 죽어도 살아남을 수 있도록 백그라운드에서 detach되어 실행됨
 
 [사용법]
-./restarter.sh <SLACK_BOT_TOKEN> <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>
+./restarter.sh <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>
 
 [인자 설명]
-1. SLACK_BOT_TOKEN: 환경변수 SLACK_BOT_TOKEN에서 가져옴 (재시작 전후 알림용)
-2. CHANNEL_ID: 현재 대화 중인 채널 ID
-3. THREAD_TS: 현재 대화 중인 스레드의 타임스탬프
-4. SAFE_COMMIT_HASH: 실패 시 롤백할 안전한 커밋 해시
+1. CHANNEL_ID: 현재 대화 중인 채널 ID
+2. THREAD_TS: 현재 대화 중인 스레드의 타임스탬프
+3. SAFE_COMMIT_HASH: 실패 시 롤백할 안전한 커밋 해시
+
+[참고: SLACK_BOT_TOKEN]
+- 환경변수에서 자동으로 참조됩니다 (보안상 CLI 인자로 전달하지 않음)
+- 별도로 전달할 필요 없습니다
 
 [중요: THREAD_TS 사용 규칙]
 - 시스템 메시지는 반드시 올바른 스레드에 전송되어야 합니다
@@ -81,8 +84,8 @@ ${appStartCommitHash ? `- 앱이 시작된 시점의 커밋 해시: ${appStartCo
 
 [실행 예시]
 ${isInThread === false && responseTs && channelId ? `# 채널 루트에서 요청한 경우: 봇의 응답 메시지 타임스탬프 사용
-./restarter.sh "$SLACK_BOT_TOKEN" "${channelId}" "${responseTs}" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"` : isInThread === true && threadTs && channelId ? `# 스레드 안에서 요청한 경우: 사용자 요청 스레드 타임스탬프 사용
-./restarter.sh "$SLACK_BOT_TOKEN" "${channelId}" "${threadTs}" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"` : `./restarter.sh "$SLACK_BOT_TOKEN" "<CHANNEL_ID>" "<THREAD_TS>" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"`}
+./restarter.sh "${channelId}" "${responseTs}" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"` : isInThread === true && threadTs && channelId ? `# 스레드 안에서 요청한 경우: 사용자 요청 스레드 타임스탬프 사용
+./restarter.sh "${channelId}" "${threadTs}" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"` : `./restarter.sh "<CHANNEL_ID>" "<THREAD_TS>" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"`}
 
 [동작 흐름]
 1. "업데이트를 시작합니다" 슬랙 알림 전송

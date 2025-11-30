@@ -1,23 +1,30 @@
 #!/bin/bash
 
 # restarter.sh
-# 사용법: ./restarter.sh <SLACK_BOT_TOKEN> <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>
+# 사용법: ./restarter.sh <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>
 #
 # 이 스크립트는 PM2로 관리되는 slack-vibecoder 서비스를 안전하게 재시작합니다.
 # 자식 프로세스에서 실행되더라도 부모 프로세스가 죽어도 살아남을 수 있도록
 # 필요시 스스로를 detach하여 재실행합니다.
+#
+# 참고: SLACK_BOT_TOKEN은 환경변수에서 직접 참조합니다 (보안상 CLI 인자로 전달하지 않음)
 
-SLACK_BOT_TOKEN="$1"
-CHANNEL_ID="$2"
-THREAD_TS="$3"
-SAFE_COMMIT_HASH="$4"
+CHANNEL_ID="$1"
+THREAD_TS="$2"
+SAFE_COMMIT_HASH="$3"
 PROJECT_DIR="/home/potados/Projects/slack-vibecoder"
 PM2_SERVICE_NAME="slack-vibecoder"
 HEALTH_CHECK_TIMEOUT=30
 
 # 필수 인자 검증
-if [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$CHANNEL_ID" ] || [ -z "$THREAD_TS" ] || [ -z "$SAFE_COMMIT_HASH" ]; then
-    echo "사용법: $0 <SLACK_BOT_TOKEN> <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>"
+if [ -z "$CHANNEL_ID" ] || [ -z "$THREAD_TS" ] || [ -z "$SAFE_COMMIT_HASH" ]; then
+    echo "사용법: $0 <CHANNEL_ID> <THREAD_TS> <SAFE_COMMIT_HASH>"
+    exit 1
+fi
+
+# 환경변수 검증
+if [ -z "$SLACK_BOT_TOKEN" ]; then
+    echo "오류: SLACK_BOT_TOKEN 환경변수가 설정되지 않았습니다."
     exit 1
 fi
 
