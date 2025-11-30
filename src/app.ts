@@ -93,7 +93,7 @@ async function updateMetadataOnly(threadTs: string): Promise<void> {
   // 현재 메시지 상태(아이콘, 텍스트) 유지
   const toolInfoText = state.lastToolInfo ? `${state.lastToolInfo}\n\n` : "";
   const userTag = `<@${state.userId}> ${state.lastIcon}`;
-  
+
   let messageText: string;
   if (state.lastText) {
     // 메타데이터, 사용자 태그, 툴 정보를 제외한 나머지 공간 계산
@@ -101,6 +101,9 @@ async function updateMetadataOnly(threadTs: string): Promise<void> {
     const maxTextLength = 2500 - overhead;
     const truncatedText = truncateForSlack(state.lastText, maxTextLength);
     messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
+  } else if (state.lastToolInfo) {
+    // 텍스트는 없지만 도구 정보는 있는 경우 (도구 실행 중)
+    messageText = `${userTag}\n\n${toolInfoText}`;
   } else {
     messageText = userTag;
   }
