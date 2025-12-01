@@ -410,6 +410,21 @@ app.event("app_mention", async ({ event, client, say }) => {
           text: fallbackText,
           blocks: finalBlocks,
         });
+
+        // Quick fix: 1초 후에 한 번 더 업데이트하여 경합 조건으로 인한 덮어쓰기 방지
+        setTimeout(async () => {
+          try {
+            await client.chat.update({
+              channel,
+              ts: responseTs,
+              text: fallbackText,
+              blocks: finalBlocks,
+            });
+          } catch {
+            // 재시도 실패는 무시
+          }
+        }, 1000);
+
         activeMessages.delete(messageKey);
 
         // 성공적인 턴어라운드 로그 (restarter.sh가 감지하는 용도)
