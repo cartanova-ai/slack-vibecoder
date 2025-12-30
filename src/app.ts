@@ -49,6 +49,14 @@ interface SessionState {
 const sessionStates = new Map<string, SessionState>();
 
 /**
+ * 사용자 멘션 태그를 반환합니다.
+ * userId가 "unknown"이면 빈 문자열을 반환합니다.
+ */
+function getUserMention(userId: string): string {
+  return userId === "unknown" ? "" : `<@${userId}>`;
+}
+
+/**
  * 슬랙 블록 텍스트를 안전한 길이로 자릅니다.
  * 슬랙 mrkdwn 텍스트 블록 제한: 3000자
  * 여유를 두고 2500자로 제한 (메타데이터, 태그 등 고려)
@@ -130,7 +138,7 @@ app.event("app_mention", async ({ event, client, say }) => {
 
   if (!userQuery) {
     await say({
-      text: `<@${userId}> 무엇을 도와드릴까요? 메시지를 함께 보내주세요!`,
+      text: `${getUserMention(userId)} 무엇을 도와드릴까요? 메시지를 함께 보내주세요!`.trim(),
       ...(isInThread && { thread_ts: event.thread_ts }),
     });
     return;
@@ -183,7 +191,7 @@ app.event("app_mention", async ({ event, client, say }) => {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `<@${userId}> 🤔 생각하는 중...`,
+        text: `${getUserMention(userId)} 🤔 생각하는 중...`.trim(),
       },
     },
     {
@@ -203,7 +211,7 @@ app.event("app_mention", async ({ event, client, say }) => {
     },
   ];
 
-  const initialFallbackText = `<@${userId}> 🤔 생각하는 중...`;
+  const initialFallbackText = `${getUserMention(userId)} 🤔 생각하는 중...`.trim();
 
   // 초기 메시지 전송 (진행 중 상태 + 멈춰 버튼)
   const initialMessage = await client.chat.postMessage({
@@ -289,7 +297,8 @@ app.event("app_mention", async ({ event, client, say }) => {
 
         // 메시지 텍스트 구성 (슬랙 길이 제한 고려)
         const toolInfoText = toolInfo ? `${toolInfo}\n\n` : "";
-        const userTag = `<@${userId}> ⏳ 작업 중...`;
+        const userMention = getUserMention(userId);
+        const userTag = userMention ? `${userMention} ⏳ 작업 중...` : "⏳ 작업 중...";
         const overhead = userTag.length + toolInfoText.length + 10;
         const maxTextLength = 2500 - overhead;
         const truncatedText = truncateForSlack(text, maxTextLength);
@@ -329,7 +338,7 @@ app.event("app_mention", async ({ event, client, say }) => {
           },
         ];
 
-        const fallbackText = `<@${userId}> 작업 중...`;
+        const fallbackText = userMention ? `${userMention} 작업 중...` : "작업 중...";
 
         // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
         sessionState.lastBlocks = progressBlocks;
@@ -372,11 +381,11 @@ app.event("app_mention", async ({ event, client, say }) => {
         const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
 
         // 최종 메시지 텍스트 구성 (슬랙 길이 제한 고려)
-        const userTag = `<@${userId}>`;
-        const overhead = userTag.length + 10;
+        const userMention = getUserMention(userId);
+        const overhead = userMention.length + 10;
         const maxTextLength = 2500 - overhead;
         const truncatedText = truncateForSlack(text, maxTextLength);
-        const finalMessageText = `${userTag}\n\n${truncatedText}`;
+        const finalMessageText = userMention ? `${userMention}\n\n${truncatedText}` : truncatedText;
 
         const finalBlocks = [
           {
@@ -397,7 +406,7 @@ app.event("app_mention", async ({ event, client, say }) => {
           },
         ];
 
-        const fallbackText = `<@${userId}> ${text.slice(0, 100)}...`;
+        const fallbackText = userMention ? `${userMention} ${text.slice(0, 100)}...` : `${text.slice(0, 100)}...`;
 
         // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
         // 이제 updateMetadataOnly가 호출되어도 이 최종 블록을 사용함
@@ -439,17 +448,20 @@ app.event("app_mention", async ({ event, client, say }) => {
           sessionState.timerId = null;
         }
 
+        const userMention = getUserMention(userId);
         const errorBlocks = [
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `<@${userId}> ❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``,
+              text: userMention
+                ? `${userMention} ❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``
+                : `❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``,
             },
           },
         ];
 
-        const fallbackText = `<@${userId}> 오류가 발생했습니다.`;
+        const fallbackText = userMention ? `${userMention} 오류가 발생했습니다.` : "오류가 발생했습니다.";
 
         // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
         sessionState.lastBlocks = errorBlocks;
@@ -520,7 +532,7 @@ app.action<BlockAction<ButtonAction>>("stop_claude", async ({ body, ack, client 
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `<@${userId}> ⏹️ 작업이 중단되었습니다.`,
+              text: `${getUserMention(userId)} ⏹️ 작업이 중단되었습니다.`.trim(),
             },
           },
         ],
