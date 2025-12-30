@@ -3,9 +3,9 @@
  * 슬랙 메시지를 받아 Claude에 전달하고 응답을 스트리밍합니다.
  */
 
-import { claude, type Message, type ContentBlock } from "@instantlyeasy/claude-code-sdk-ts";
-import { sessionManager } from "./session-manager";
+import { type ContentBlock, claude } from "@instantlyeasy/claude-code-sdk-ts";
 import { buildPrompt } from "./prompts";
+import { sessionManager } from "./session-manager";
 
 /** 실행 요약 정보입니다. */
 interface ExecutionSummary {
@@ -16,7 +16,12 @@ interface ExecutionSummary {
 /** 스트림 콜백 인터페이스입니다. */
 interface StreamCallbacks {
   /** 진행 상황이 업데이트될 때 호출됩니다. */
-  onProgress: (text: string, toolInfo: string | undefined, elapsedSeconds: number, toolCallCount: number) => Promise<void>;
+  onProgress: (
+    text: string,
+    toolInfo: string | undefined,
+    elapsedSeconds: number,
+    toolCallCount: number,
+  ) => Promise<void>;
   /** 최종 결과가 도착했을 때 호출됩니다. */
   onResult: (text: string, summary: ExecutionSummary) => Promise<void>;
   /** 에러가 발생했을 때 호출됩니다. */
@@ -35,15 +40,15 @@ export async function handleClaudeQuery(
   threadTs: string,
   userQuery: string,
   callbacks: StreamCallbacks,
-  channelId?: string
+  channelId?: string,
 ): Promise<string | null> {
   const session = sessionManager.getOrCreateSession(threadTs);
   const abortSignal = session.abortController.signal;
 
   // 상태 변수들
-  let progressText = "";      // 현재까지 받은 텍스트
-  let resultText = "";        // 최종 결과 텍스트
-  let currentToolInfo = "";   // 현재 실행 중인 도구 정보
+  let progressText = ""; // 현재까지 받은 텍스트
+  let resultText = ""; // 최종 결과 텍스트
+  let currentToolInfo = ""; // 현재 실행 중인 도구 정보
 
   // 실행 통계
   const startTime = Date.now();
@@ -52,24 +57,24 @@ export async function handleClaudeQuery(
   try {
     let claudeBuilder = claude()
       .withConfig({
-        version: "1.0", 
+        version: "1.0",
         globalSettings: {
           cwd: process.env.CLAUDE_CWD,
-          permissionMode: "bypassPermissions"
-        }
+          permissionMode: "bypassPermissions",
+        },
       })
       .withSignal(abortSignal)
-      
+
       // 도구 사용 시 즉시 UI 업데이트합니다.
       .onToolUse(async (tool) => {
         toolCallCount++;
 
         // 도구 입력에서 상세 정보를 추출합니다.
         const input = tool.input as Record<string, unknown> | undefined;
-        const description = input?.description as string || "";
-        const command = input?.command as string || "";
-        const pattern = input?.pattern as string || "";
-        const filePath = input?.file_path as string || "";
+        const description = (input?.description as string) || "";
+        const command = (input?.command as string) || "";
+        const pattern = (input?.pattern as string) || "";
+        const filePath = (input?.file_path as string) || "";
 
         // 도구별 상세 정보를 구성합니다.
         let details = "";
@@ -91,7 +96,8 @@ export async function handleClaudeQuery(
 
         // 텍스트 콘텐츠를 찾습니다.
         const textContent = content.find(
-          (c: ContentBlock): c is ContentBlock & { type: 'text'; text: string } => c.type === "text"
+          (c: ContentBlock): c is ContentBlock & { type: "text"; text: string } =>
+            c.type === "text",
         );
 
         if (textContent) {
@@ -109,7 +115,9 @@ export async function handleClaudeQuery(
 
         // 세션 ID를 저장합니다 (첫 번째 수신 시에만).
         if (message.session_id && !session.claudeSessionId) {
-          console.log(`[${new Date().toISOString()}] 📌 세션 ID 저장: ${message.session_id.substring(0, 12)}... (스레드: ${threadTs})`);
+          console.log(
+            `[${new Date().toISOString()}] 📌 세션 ID 저장: ${message.session_id.substring(0, 12)}... (스레드: ${threadTs})`,
+          );
           sessionManager.updateClaudeSessionId(threadTs, message.session_id);
         }
 
@@ -121,7 +129,9 @@ export async function handleClaudeQuery(
 
     // 기존 세션이 있으면 이어서 대화합니다.
     if (session.claudeSessionId) {
-      console.log(`[${new Date().toISOString()}] 🔄 기존 세션 ID 사용: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`);
+      console.log(
+        `[${new Date().toISOString()}] 🔄 기존 세션 ID 사용: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`,
+      );
       claudeBuilder = claudeBuilder.withSessionId(session.claudeSessionId);
     } else {
       console.log(`[${new Date().toISOString()}] 🆕 새 세션 시작 (스레드: ${threadTs})`);

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
 import { claude } from "@instantlyeasy/claude-code-sdk-ts";
+import { describe, expect, it } from "vitest";
 
 describe("Claude SDK 실제 통합 테스트", () => {
   it("Claude 함수를 호출할 수 있다", () => {
@@ -13,14 +13,8 @@ describe("Claude SDK 실제 통합 테스트", () => {
     await claude()
       .query("안녕하세요! 간단히 인사만 해주세요. 한 문장으로 답변해주세요.")
       .stream(async (message) => {
-        if (
-          message.type === "assistant" &&
-          message.content &&
-          message.content.length > 0
-        ) {
-          const textContent = message.content.find(
-            (c: any) => c.type === "text"
-          ) as any;
+        if (message.type === "assistant" && message.content && message.content.length > 0) {
+          const textContent = message.content.find((c: any) => c.type === "text") as any;
           if (textContent && "text" in textContent) {
             response = textContent.text;
           }
@@ -39,19 +33,13 @@ describe("Claude SDK 실제 통합 테스트", () => {
     console.log("\n📡 스트리밍 응답:");
     await claude()
       .query(
-        "/Users/potados/Projects/sonamu에 가서 현재 변경된 내용들이 무엇이고 왜 변경되었는지 설명해줘."
+        "/Users/potados/Projects/sonamu에 가서 현재 변경된 내용들이 무엇이고 왜 변경되었는지 설명해줘.",
       )
       .stream(async (message) => {
         console.log(JSON.stringify(message, null, 2));
 
-        if (
-          message.type === "assistant" &&
-          message.content &&
-          message.content.length > 0
-        ) {
-          const textContent = message.content.find(
-            (c: any) => c.type === "text"
-          ) as any;
+        if (message.type === "assistant" && message.content && message.content.length > 0) {
+          const textContent = message.content.find((c: any) => c.type === "text") as any;
           if (textContent && "text" in textContent) {
             chunks.push(textContent.text);
             chunkCount++;
@@ -72,14 +60,8 @@ describe("Claude SDK 실제 통합 테스트", () => {
     await claude()
       .query("TypeScript에서 두 숫자를 더하는 함수를 작성해주세요.")
       .stream(async (message) => {
-        if (
-          message.type === "assistant" &&
-          message.content &&
-          message.content.length > 0
-        ) {
-          const textContent = message.content.find(
-            (c: any) => c.type === "text"
-          ) as any;
+        if (message.type === "assistant" && message.content && message.content.length > 0) {
+          const textContent = message.content.find((c: any) => c.type === "text") as any;
           if (textContent && "text" in textContent) {
             response = textContent.text;
           }
@@ -97,18 +79,10 @@ describe("Claude SDK 실제 통합 테스트", () => {
 
     console.log("\n📡 긴 응답 스트리밍:");
     await claude()
-      .query(
-        "JavaScript의 클로저(closure)에 대해 간단히 설명해주세요. 2-3문장으로 답변해주세요."
-      )
+      .query("JavaScript의 클로저(closure)에 대해 간단히 설명해주세요. 2-3문장으로 답변해주세요.")
       .stream(async (message) => {
-        if (
-          message.type === "assistant" &&
-          message.content &&
-          message.content.length > 0
-        ) {
-          const textContent = message.content.find(
-            (c: any) => c.type === "text"
-          ) as any;
+        if (message.type === "assistant" && message.content && message.content.length > 0) {
+          const textContent = message.content.find((c: any) => c.type === "text") as any;
           if (textContent && "text" in textContent) {
             response = textContent.text;
             updateCount++;
@@ -128,10 +102,10 @@ describe("Claude SDK 실제 통합 테스트", () => {
 
     if (!slackBotToken || !slackTeamId) {
       console.warn(
-        "\n⚠️  SLACK_BOT_TOKEN과 SLACK_TEAM_ID 환경 변수가 설정되지 않아 테스트를 건너뜁니다."
+        "\n⚠️  SLACK_BOT_TOKEN과 SLACK_TEAM_ID 환경 변수가 설정되지 않아 테스트를 건너뜁니다.",
       );
       console.log(
-        "사용법: SLACK_BOT_TOKEN=xoxb-... SLACK_TEAM_ID=T0000000000 pnpm test:integration"
+        "사용법: SLACK_BOT_TOKEN=xoxb-... SLACK_TEAM_ID=T0000000000 pnpm test:integration",
       );
       return;
     }
@@ -153,14 +127,8 @@ describe("Claude SDK 실제 통합 테스트", () => {
       .query("Slack에서 내가 속한 채널 목록을 보여줘. 최대 5개만.")
       .stream(async (message) => {
         // 응답 텍스트 수집
-        if (
-          message.type === "assistant" &&
-          message.content &&
-          message.content.length > 0
-        ) {
-          const textContent = message.content.find(
-            (c: any) => c.type === "text"
-          ) as any;
+        if (message.type === "assistant" && message.content && message.content.length > 0) {
+          const textContent = message.content.find((c: any) => c.type === "text") as any;
           if (textContent && "text" in textContent) {
             response = textContent.text;
             process.stdout.write(textContent.text);

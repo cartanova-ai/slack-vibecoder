@@ -72,7 +72,7 @@ ${channelId ? `- 현재 채널 ID: ${channelId}` : ""}
 ${appStartCommitHash ? `- 앱이 시작된 시점의 커밋 해시: ${appStartCommitHash}` : "- 앱 시작 시점 커밋 해시를 사용할 수 없으면 fallback으로 현재 HEAD 사용"}
 
 [실행 예시]
-${threadTs && channelId ? `./restarter.sh "${channelId}" "${threadTs}" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"` : `./restarter.sh "<CHANNEL_ID>" "<THREAD_TS>" "${appStartCommitHash || '$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)'}"`}
+${threadTs && channelId ? `./restarter.sh "${channelId}" "${threadTs}" "${appStartCommitHash || "$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)"}"` : `./restarter.sh "<CHANNEL_ID>" "<THREAD_TS>" "${appStartCommitHash || "$(cd ~/Projects/slack-vibecoder && git rev-parse HEAD)"}"`}
 
 [동작 흐름]
 1. "업데이트를 시작합니다" 슬랙 알림 전송

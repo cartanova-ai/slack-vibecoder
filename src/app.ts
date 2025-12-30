@@ -9,13 +9,18 @@
  */
 
 import "dotenv/config";
-import { App, BlockAction, ButtonAction } from "@slack/bolt";
-import { execSync } from "child_process";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { handleClaudeQuery, abortSession } from "./claude-handler";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { App, type BlockAction, type ButtonAction } from "@slack/bolt";
+import {
+  getAppStartCommitHash,
+  getAppVersion,
+  setAppStartCommitHash,
+  setAppVersion,
+} from "./app-info";
+import { abortSession, handleClaudeQuery } from "./claude-handler";
 import { sessionManager } from "./session-manager";
-import { setAppStartCommitHash, setAppVersion, getAppVersion, getAppStartCommitHash } from "./app-info";
 
 // 환경 변수 확인
 const requiredEnvVars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "CLAUDE_CWD"];
@@ -95,10 +100,7 @@ async function updateMetadataOnly(threadTs: string): Promise<void> {
         if (element.type === "mrkdwn" && typeof element.text === "string") {
           // 시간 패턴: _X초 또는 _X분 Y초 로 시작하는 부분을 교체
           // 예: "_10초 경과, ..." 또는 "_2분 15초 소요, ..."
-          element.text = element.text.replace(
-            /^_\d+분?\s*\d*초?\s*(경과|소요)/,
-            `_${timeStr} $1`
-          );
+          element.text = element.text.replace(/^_\d+분?\s*\d*초?\s*(경과|소요)/, `_${timeStr} $1`);
         }
       }
     }
@@ -152,14 +154,14 @@ app.event("app_mention", async ({ event, client, say }) => {
   const version = getAppVersion();
   const commitHash = getAppStartCommitHash();
   const versionInfoParts: string[] = [];
-  
+
   if (version) {
     versionInfoParts.push(`v${version}`);
   }
   if (commitHash) {
     versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
   }
-  
+
   const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
   const initialMetadataText = `_0초 경과, 도구 0회 호출${versionInfo}_`;
 
@@ -240,214 +242,235 @@ app.event("app_mention", async ({ event, client, say }) => {
 
   // Claude 처리
   try {
-    await handleClaudeQuery(threadTs, userQuery, {
-      // 진행 상황 업데이트
-      onProgress: async (text: string, toolInfo: string | undefined, elapsedSeconds: number, toolCallCount: number) => {
-        // 세션이 삭제되었으면 (중단된 경우) 업데이트 스킵
-        if (!sessionStates.has(threadTs)) {
-          return;
-        }
-
-        // 메타데이터 구성
-        const minutes = Math.floor(elapsedSeconds / 60);
-        const seconds = elapsedSeconds % 60;
-        const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
-
-        const version = getAppVersion();
-        const commitHash = getAppStartCommitHash();
-        const versionInfoParts: string[] = [];
-
-        if (version) {
-          versionInfoParts.push(`v${version}`);
-        }
-        if (commitHash) {
-          versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
-        }
-
-        const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
-        const metadataText = `_${timeStr} 경과, 도구 ${toolCallCount}회 호출${versionInfo}_`;
-
-        // 메시지 텍스트 구성 (슬랙 길이 제한 고려)
-        const toolInfoText = toolInfo ? `${toolInfo}\n\n` : "";
-        const userMention = getUserMention(userId);
-        const userTag = userMention ? `${userMention} ⏳ 작업 중...` : "⏳ 작업 중...";
-        const overhead = userTag.length + toolInfoText.length + 10;
-        const maxTextLength = 2500 - overhead;
-        const truncatedText = truncateForSlack(text, maxTextLength);
-        const messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
-
-        const progressBlocks = [
-          {
-            type: "context",
-            elements: [
-              {
-                type: "mrkdwn",
-                text: metadataText,
-              },
-            ],
-          },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: messageText,
-            },
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "🛑 멈춰!",
-                  emoji: true,
-                },
-                action_id: "stop_claude",
-                value: threadTs,
-              },
-            ],
-          },
-        ];
-
-        const fallbackText = userMention ? `${userMention} 작업 중...` : "작업 중...";
-
-        // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
-        sessionState.lastBlocks = progressBlocks;
-        sessionState.lastFallbackText = fallbackText;
-
-        // 즉시 업데이트 (이벤트 반영)
-        await client.chat.update({
-          channel,
-          ts: responseTs,
-          text: fallbackText,
-          blocks: progressBlocks,
-        });
-      },
-
-      // 최종 결과
-      onResult: async (text: string, summary: { durationSeconds: number; toolCallCount: number }) => {
-        // 타이머 정리 (idempotent 설계로 세션은 삭제하지 않음)
-        if (sessionState.timerId) {
-          clearInterval(sessionState.timerId);
-          sessionState.timerId = null;
-        }
-
-        const minutes = Math.floor(summary.durationSeconds / 60);
-        const seconds = summary.durationSeconds % 60;
-        const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
-
-        // 버전과 커밋 해시 정보 구성
-        const version = getAppVersion();
-        const commitHash = getAppStartCommitHash();
-        const versionInfoParts: string[] = [];
-
-        if (version) {
-          versionInfoParts.push(`v${version}`);
-        }
-        if (commitHash) {
-          versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
-        }
-
-        const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
-        const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
-
-        // 최종 메시지 텍스트 구성 (슬랙 길이 제한 고려)
-        const userMention = getUserMention(userId);
-        const overhead = userMention.length + 10;
-        const maxTextLength = 2500 - overhead;
-        const truncatedText = truncateForSlack(text, maxTextLength);
-        const finalMessageText = userMention ? `${userMention}\n\n${truncatedText}` : truncatedText;
-
-        const finalBlocks = [
-          {
-            type: "context",
-            elements: [
-              {
-                type: "mrkdwn",
-                text: summaryText,
-              },
-            ],
-          },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: finalMessageText,
-            },
-          },
-        ];
-
-        const fallbackText = userMention ? `${userMention} ${text.slice(0, 100)}...` : `${text.slice(0, 100)}...`;
-
-        // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
-        // 이제 updateMetadataOnly가 호출되어도 이 최종 블록을 사용함
-        sessionState.lastBlocks = finalBlocks;
-        sessionState.lastFallbackText = fallbackText;
-
-        await client.chat.update({
-          channel,
-          ts: responseTs,
-          text: fallbackText,
-          blocks: finalBlocks,
-        });
-
-        // Quick fix: 1초 후에 한 번 더 업데이트하여 경합 조건으로 인한 덮어쓰기 방지
-        setTimeout(async () => {
-          try {
-            await client.chat.update({
-              channel,
-              ts: responseTs,
-              text: fallbackText,
-              blocks: finalBlocks,
-            });
-          } catch {
-            // 재시도 실패는 무시
+    await handleClaudeQuery(
+      threadTs,
+      userQuery,
+      {
+        // 진행 상황 업데이트
+        onProgress: async (
+          text: string,
+          toolInfo: string | undefined,
+          elapsedSeconds: number,
+          toolCallCount: number,
+        ) => {
+          // 세션이 삭제되었으면 (중단된 경우) 업데이트 스킵
+          if (!sessionStates.has(threadTs)) {
+            return;
           }
-        }, 1000);
 
-        activeMessages.delete(messageKey);
+          // 메타데이터 구성
+          const minutes = Math.floor(elapsedSeconds / 60);
+          const seconds = elapsedSeconds % 60;
+          const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
 
-        // 성공적인 턴어라운드 로그 (restarter.sh가 감지하는 용도)
-        console.log(`[${new Date().toISOString()}] ✅ TURNAROUND_SUCCESS: 스레드 ${threadTs} 완료 (${timeStr}, 도구 ${summary.toolCallCount}회)`);
-      },
+          const version = getAppVersion();
+          const commitHash = getAppStartCommitHash();
+          const versionInfoParts: string[] = [];
 
-      // 에러 처리
-      onError: async (error: Error) => {
-        // 타이머 정리 (idempotent 설계로 세션은 삭제하지 않음)
-        if (sessionState.timerId) {
-          clearInterval(sessionState.timerId);
-          sessionState.timerId = null;
-        }
+          if (version) {
+            versionInfoParts.push(`v${version}`);
+          }
+          if (commitHash) {
+            versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+          }
 
-        const userMention = getUserMention(userId);
-        const errorBlocks = [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: userMention
-                ? `${userMention} ❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``
-                : `❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``,
+          const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+          const metadataText = `_${timeStr} 경과, 도구 ${toolCallCount}회 호출${versionInfo}_`;
+
+          // 메시지 텍스트 구성 (슬랙 길이 제한 고려)
+          const toolInfoText = toolInfo ? `${toolInfo}\n\n` : "";
+          const userMention = getUserMention(userId);
+          const userTag = userMention ? `${userMention} ⏳ 작업 중...` : "⏳ 작업 중...";
+          const overhead = userTag.length + toolInfoText.length + 10;
+          const maxTextLength = 2500 - overhead;
+          const truncatedText = truncateForSlack(text, maxTextLength);
+          const messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
+
+          const progressBlocks = [
+            {
+              type: "context",
+              elements: [
+                {
+                  type: "mrkdwn",
+                  text: metadataText,
+                },
+              ],
             },
-          },
-        ];
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: messageText,
+              },
+            },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  text: {
+                    type: "plain_text",
+                    text: "🛑 멈춰!",
+                    emoji: true,
+                  },
+                  action_id: "stop_claude",
+                  value: threadTs,
+                },
+              ],
+            },
+          ];
 
-        const fallbackText = userMention ? `${userMention} 오류가 발생했습니다.` : "오류가 발생했습니다.";
+          const fallbackText = userMention ? `${userMention} 작업 중...` : "작업 중...";
 
-        // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
-        sessionState.lastBlocks = errorBlocks;
-        sessionState.lastFallbackText = fallbackText;
+          // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
+          sessionState.lastBlocks = progressBlocks;
+          sessionState.lastFallbackText = fallbackText;
 
-        await client.chat.update({
-          channel,
-          ts: responseTs,
-          text: fallbackText,
-          blocks: errorBlocks,
-        });
-        activeMessages.delete(messageKey);
+          // 즉시 업데이트 (이벤트 반영)
+          await client.chat.update({
+            channel,
+            ts: responseTs,
+            text: fallbackText,
+            blocks: progressBlocks,
+          });
+        },
+
+        // 최종 결과
+        onResult: async (
+          text: string,
+          summary: { durationSeconds: number; toolCallCount: number },
+        ) => {
+          // 타이머 정리 (idempotent 설계로 세션은 삭제하지 않음)
+          if (sessionState.timerId) {
+            clearInterval(sessionState.timerId);
+            sessionState.timerId = null;
+          }
+
+          const minutes = Math.floor(summary.durationSeconds / 60);
+          const seconds = summary.durationSeconds % 60;
+          const timeStr = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+
+          // 버전과 커밋 해시 정보 구성
+          const version = getAppVersion();
+          const commitHash = getAppStartCommitHash();
+          const versionInfoParts: string[] = [];
+
+          if (version) {
+            versionInfoParts.push(`v${version}`);
+          }
+          if (commitHash) {
+            versionInfoParts.push(`(${commitHash.substring(0, 7)})`);
+          }
+
+          const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
+          const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
+
+          // 최종 메시지 텍스트 구성 (슬랙 길이 제한 고려)
+          const userMention = getUserMention(userId);
+          const overhead = userMention.length + 10;
+          const maxTextLength = 2500 - overhead;
+          const truncatedText = truncateForSlack(text, maxTextLength);
+          const finalMessageText = userMention
+            ? `${userMention}\n\n${truncatedText}`
+            : truncatedText;
+
+          const finalBlocks = [
+            {
+              type: "context",
+              elements: [
+                {
+                  type: "mrkdwn",
+                  text: summaryText,
+                },
+              ],
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: finalMessageText,
+              },
+            },
+          ];
+
+          const fallbackText = userMention
+            ? `${userMention} ${text.slice(0, 100)}...`
+            : `${text.slice(0, 100)}...`;
+
+          // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
+          // 이제 updateMetadataOnly가 호출되어도 이 최종 블록을 사용함
+          sessionState.lastBlocks = finalBlocks;
+          sessionState.lastFallbackText = fallbackText;
+
+          await client.chat.update({
+            channel,
+            ts: responseTs,
+            text: fallbackText,
+            blocks: finalBlocks,
+          });
+
+          // Quick fix: 1초 후에 한 번 더 업데이트하여 경합 조건으로 인한 덮어쓰기 방지
+          setTimeout(async () => {
+            try {
+              await client.chat.update({
+                channel,
+                ts: responseTs,
+                text: fallbackText,
+                blocks: finalBlocks,
+              });
+            } catch {
+              // 재시도 실패는 무시
+            }
+          }, 1000);
+
+          activeMessages.delete(messageKey);
+
+          // 성공적인 턴어라운드 로그 (restarter.sh가 감지하는 용도)
+          console.log(
+            `[${new Date().toISOString()}] ✅ TURNAROUND_SUCCESS: 스레드 ${threadTs} 완료 (${timeStr}, 도구 ${summary.toolCallCount}회)`,
+          );
+        },
+
+        // 에러 처리
+        onError: async (error: Error) => {
+          // 타이머 정리 (idempotent 설계로 세션은 삭제하지 않음)
+          if (sessionState.timerId) {
+            clearInterval(sessionState.timerId);
+            sessionState.timerId = null;
+          }
+
+          const userMention = getUserMention(userId);
+          const errorBlocks = [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: userMention
+                  ? `${userMention} ❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``
+                  : `❌ 오류가 발생했습니다:\n\`\`\`${error.message}\`\`\``,
+              },
+            },
+          ];
+
+          const fallbackText = userMention
+            ? `${userMention} 오류가 발생했습니다.`
+            : "오류가 발생했습니다.";
+
+          // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
+          sessionState.lastBlocks = errorBlocks;
+          sessionState.lastFallbackText = fallbackText;
+
+          await client.chat.update({
+            channel,
+            ts: responseTs,
+            text: fallbackText,
+            blocks: errorBlocks,
+          });
+          activeMessages.delete(messageKey);
+        },
       },
-    }, channel);
+      channel,
+    );
   } catch (error) {
     console.error("Claude 처리 중 오류:", error);
     activeMessages.delete(messageKey);
@@ -481,7 +504,7 @@ app.action<BlockAction<ButtonAction>>("stop_claude", async ({ body, ack, client 
   // 타이머 정리 (sessionStates.delete를 먼저)
   const sessionState = sessionStates.get(threadTs);
   sessionStates.delete(threadTs);
-  
+
   if (sessionState?.timerId) {
     clearInterval(sessionState.timerId);
   }
@@ -515,19 +538,22 @@ app.action<BlockAction<ButtonAction>>("stop_claude", async ({ body, ack, client 
 });
 
 // 오래된 세션 정리 (30분마다)
-setInterval(() => {
-  sessionManager.cleanupOldSessions(60 * 60 * 1000); // 1시간 이상된 세션 정리
-}, 30 * 60 * 1000);
+setInterval(
+  () => {
+    sessionManager.cleanupOldSessions(60 * 60 * 1000); // 1시간 이상된 세션 정리
+  },
+  30 * 60 * 1000,
+);
 
 // 앱 시작
 (async () => {
   const projectDir = process.env.PROJECT_DIR || process.cwd();
-  
+
   // 앱 시작 시점의 커밋 해시 저장
   try {
-    const commitHash = execSync("git rev-parse HEAD", { 
+    const commitHash = execSync("git rev-parse HEAD", {
       cwd: projectDir,
-      encoding: "utf-8" 
+      encoding: "utf-8",
     }).trim();
     setAppStartCommitHash(commitHash);
     console.log(`📌 앱 시작 시점 커밋 해시: ${commitHash}`);
