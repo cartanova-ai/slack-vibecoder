@@ -33,8 +33,7 @@ function buildSystemPrompts(threadTs?: string, channelId?: string): string[] {
     `=== 응답 형식 ===
 - 응답 텍스트는 마크다운 없이 플레인 텍스트로 제공하세요.
 - 단, 코드블럭은 사용해도 됩니다.
-- 당신의 응답은 Slack(mrkdwn)에 전송됩니다.
-- 너무 길지 않게 응답해주세요. 최대 4000자 이내로 제한해주세요.`,
+- 당신의 응답은 Slack(mrkdwn)에 전송됩니다.`,
 
     `=== 맥락 찾기 ===
 - 맥락을 찾지 못하겠다면 Slack 스레드와 근처 메시지들을 확인하세요.

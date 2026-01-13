@@ -89,6 +89,44 @@ function truncateForSlack(text: string, maxLength: number = 2500): string {
 }
 
 /**
+ * 긴 텍스트를 Slack 메시지 한도에 맞게 분할합니다.
+ * 줄바꿈이나 단어 경계에서 자르려고 시도합니다.
+ */
+function splitTextForSlack(text: string, maxLength: number = 2500): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // 최대 길이 내에서 줄바꿈 찾기
+    let splitIndex = remaining.lastIndexOf("\n", maxLength);
+
+    // 줄바꿈이 없거나 너무 앞에 있으면 공백에서 자르기
+    if (splitIndex < maxLength * 0.5) {
+      splitIndex = remaining.lastIndexOf(" ", maxLength);
+    }
+
+    // 공백도 없으면 그냥 자르기
+    if (splitIndex < maxLength * 0.5) {
+      splitIndex = maxLength;
+    }
+
+    chunks.push(remaining.slice(0, splitIndex).trimEnd());
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  return chunks;
+}
+
+/**
  * 메타데이터(시간)만 업데이트하는 함수 (타이머용)
  *
  * idempotent 설계: 마지막으로 보낸 블록을 그대로 사용하되
@@ -375,12 +413,9 @@ app.event("app_mention", async ({ event, client, say }) => {
           summary: { durationSeconds: number; toolCallCount: number },
         ) => {
           // 세션 완료 표시 (race condition 방지)
-          // 중요: 이 플래그를 가장 먼저 설정해야 함!
-          // updateMetadataOnly가 이미 실행 중이더라도, chat.update 직전에
-          // 이 플래그를 체크하여 최종 메시지 덮어쓰기를 방지함
           sessionState.isCompleted = true;
 
-          // 타이머 정리 (idempotent 설계로 세션은 삭제하지 않음)
+          // 타이머 정리
           if (sessionState.timerId) {
             clearInterval(sessionState.timerId);
             sessionState.timerId = null;
@@ -404,62 +439,22 @@ app.event("app_mention", async ({ event, client, say }) => {
 
           const versionInfo = versionInfoParts.length > 0 ? `, ${versionInfoParts.join(" ")}` : "";
           const summaryText = `_${timeStr} 소요, 도구 ${summary.toolCallCount}회 호출${versionInfo}_`;
-
-          // 최종 메시지 텍스트 구성 (슬랙 길이 제한 고려)
           const userMention = getUserMention(userId);
+
+          // 텍스트를 청크로 분할
           const overhead = userMention.length + 10;
-          const maxTextLength = 2500 - overhead;
-          const truncatedText = truncateForSlack(text, maxTextLength);
-          const finalMessageText = userMention
-            ? `${userMention}\n\n${truncatedText}`
-            : truncatedText;
+          const maxChunkLength = 2500 - overhead;
+          const chunks = splitTextForSlack(text, maxChunkLength);
 
-          const finalBlocks = [
-            {
-              type: "context",
-              elements: [
-                {
-                  type: "mrkdwn",
-                  text: summaryText,
-                },
-              ],
-            },
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: finalMessageText,
-              },
-            },
-          ];
-
-          const fallbackText = userMention
-            ? `${userMention} ${text.slice(0, 100)}...`
-            : `${text.slice(0, 100)}...`;
-
-          // 블록과 fallback 텍스트 저장 (idempotent 업데이트용)
-          // 이제 updateMetadataOnly가 호출되어도 이 최종 블록을 사용함
-          sessionState.lastBlocks = finalBlocks;
-          sessionState.lastFallbackText = fallbackText;
-
-          try {
-            await client.chat.update({
-              channel,
-              ts: responseTs,
-              text: fallbackText,
-              blocks: finalBlocks,
-            });
-          } catch (error) {
-            // 최종 메시지 업데이트 실패 - 사용자에게 알림
-            console.error(`[${new Date().toISOString()}] onResult chat.update 실패:`, error);
+          // 에러 발생 시 첫 메시지를 에러로 덮어쓰는 헬퍼
+          const showError = async (error: unknown) => {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            const truncatedError = errorMessage.slice(0, 500);
-            const errorNoticeBlocks = [
+            const errorBlocks = [
               {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `${getUserMention(userId)} 작업은 완료되었으나, 결과 메시지 표시 중 오류가 발생했습니다.\n\n오류: \`${truncatedError}\`\n\n(메시지가 너무 길어 Slack 제한을 초과했을 수 있습니다)`.trim(),
+                  text: `${userMention} ❌ 메시지 전송 중 오류 발생:\n\`\`\`${errorMessage.slice(0, 500)}\`\`\``.trim(),
                 },
               },
             ];
@@ -467,23 +462,81 @@ app.event("app_mention", async ({ event, client, say }) => {
               await client.chat.update({
                 channel,
                 ts: responseTs,
-                text: "작업 완료 - 결과 표시 오류",
-                blocks: errorNoticeBlocks,
+                text: "오류 발생",
+                blocks: errorBlocks,
               });
-            } catch (retryError) {
-              // 이것마저 실패하면 로그만 남김
-              console.error(`[${new Date().toISOString()}] 에러 알림 메시지 표시도 실패:`, retryError);
+            } catch {
+              console.error(`[${new Date().toISOString()}] 에러 표시도 실패`);
+            }
+          };
+
+          // 첫 번째 청크: 기존 메시지 업데이트 (메타데이터 포함)
+          const firstChunkText = userMention
+            ? `${userMention}\n\n${chunks[0]}`
+            : chunks[0];
+
+          const firstBlocks = [
+            {
+              type: "context",
+              elements: [{ type: "mrkdwn", text: summaryText }],
+            },
+            {
+              type: "section",
+              text: { type: "mrkdwn", text: firstChunkText },
+            },
+          ];
+
+          const fallbackText = userMention
+            ? `${userMention} ${text.slice(0, 100)}...`
+            : `${text.slice(0, 100)}...`;
+
+          sessionState.lastBlocks = firstBlocks;
+          sessionState.lastFallbackText = fallbackText;
+
+          try {
+            await client.chat.update({
+              channel,
+              ts: responseTs,
+              text: fallbackText,
+              blocks: firstBlocks,
+            });
+          } catch (error) {
+            console.error(`[${new Date().toISOString()}] onResult 첫 메시지 업데이트 실패:`, error);
+            await showError(error);
+            activeMessages.delete(messageKey);
+            return;
+          }
+
+          // 나머지 청크: 스레드에 추가 메시지로 전송
+          for (let i = 1; i < chunks.length; i++) {
+            try {
+              await client.chat.postMessage({
+                channel,
+                thread_ts: threadTs,
+                text: chunks[i],
+                blocks: [
+                  {
+                    type: "section",
+                    text: { type: "mrkdwn", text: chunks[i] },
+                  },
+                ],
+              });
+            } catch (error) {
+              console.error(`[${new Date().toISOString()}] 후속 메시지 ${i + 1}/${chunks.length} 전송 실패:`, error);
+              await showError(error);
+              activeMessages.delete(messageKey);
+              return;
             }
           }
 
-          // Quick fix: 1초 후에 한 번 더 업데이트하여 경합 조건으로 인한 덮어쓰기 방지
+          // Quick fix: 1초 후에 첫 메시지 한 번 더 업데이트
           setTimeout(async () => {
             try {
               await client.chat.update({
                 channel,
                 ts: responseTs,
                 text: fallbackText,
-                blocks: finalBlocks,
+                blocks: firstBlocks,
               });
             } catch {
               // 재시도 실패는 무시
@@ -492,9 +545,9 @@ app.event("app_mention", async ({ event, client, say }) => {
 
           activeMessages.delete(messageKey);
 
-          // 성공적인 턴어라운드 로그 (restarter.sh가 감지하는 용도)
+          // 성공적인 턴어라운드 로그
           console.log(
-            `[${new Date().toISOString()}] ✅ TURNAROUND_SUCCESS: 스레드 ${threadTs} 완료 (${timeStr}, 도구 ${summary.toolCallCount}회)`,
+            `[${new Date().toISOString()}] ✅ TURNAROUND_SUCCESS: 스레드 ${threadTs} 완료 (${timeStr}, 도구 ${summary.toolCallCount}회, ${chunks.length}개 메시지)`,
           );
         },
 
