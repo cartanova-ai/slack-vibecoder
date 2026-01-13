@@ -356,12 +356,17 @@ app.event("app_mention", async ({ event, client, say }) => {
           sessionState.lastFallbackText = fallbackText;
 
           // 즉시 업데이트 (이벤트 반영)
-          await client.chat.update({
-            channel,
-            ts: responseTs,
-            text: fallbackText,
-            blocks: progressBlocks,
-          });
+          try {
+            await client.chat.update({
+              channel,
+              ts: responseTs,
+              text: fallbackText,
+              blocks: progressBlocks,
+            });
+          } catch (error) {
+            // 진행 중 업데이트 실패는 로그만 남기고 계속 진행 (다음 업데이트에서 재시도)
+            console.error(`[${new Date().toISOString()}] onProgress chat.update 실패:`, error);
+          }
         },
 
         // 최종 결과
@@ -437,12 +442,39 @@ app.event("app_mention", async ({ event, client, say }) => {
           sessionState.lastBlocks = finalBlocks;
           sessionState.lastFallbackText = fallbackText;
 
-          await client.chat.update({
-            channel,
-            ts: responseTs,
-            text: fallbackText,
-            blocks: finalBlocks,
-          });
+          try {
+            await client.chat.update({
+              channel,
+              ts: responseTs,
+              text: fallbackText,
+              blocks: finalBlocks,
+            });
+          } catch (error) {
+            // 최종 메시지 업데이트 실패 - 사용자에게 알림
+            console.error(`[${new Date().toISOString()}] onResult chat.update 실패:`, error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const truncatedError = errorMessage.slice(0, 500);
+            const errorNoticeBlocks = [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `${getUserMention(userId)} 작업은 완료되었으나, 결과 메시지 표시 중 오류가 발생했습니다.\n\n오류: \`${truncatedError}\`\n\n(메시지가 너무 길어 Slack 제한을 초과했을 수 있습니다)`.trim(),
+                },
+              },
+            ];
+            try {
+              await client.chat.update({
+                channel,
+                ts: responseTs,
+                text: "작업 완료 - 결과 표시 오류",
+                blocks: errorNoticeBlocks,
+              });
+            } catch (retryError) {
+              // 이것마저 실패하면 로그만 남김
+              console.error(`[${new Date().toISOString()}] 에러 알림 메시지 표시도 실패:`, retryError);
+            }
+          }
 
           // Race condition 방지: 3초간 반복 업데이트
           // updateMetadataOnly의 네트워크 요청이 늦게 도착해서 최종 메시지를 덮어쓸 수 있음
@@ -502,12 +534,27 @@ app.event("app_mention", async ({ event, client, say }) => {
           sessionState.lastBlocks = errorBlocks;
           sessionState.lastFallbackText = fallbackText;
 
-          await client.chat.update({
-            channel,
-            ts: responseTs,
-            text: fallbackText,
-            blocks: errorBlocks,
-          });
+          try {
+            await client.chat.update({
+              channel,
+              ts: responseTs,
+              text: fallbackText,
+              blocks: errorBlocks,
+            });
+          } catch (updateError) {
+            // 에러 메시지 표시도 실패 - 최소한의 메시지라도 시도
+            console.error(`[${new Date().toISOString()}] onError chat.update 실패:`, updateError);
+            try {
+              await client.chat.update({
+                channel,
+                ts: responseTs,
+                text: `${getUserMention(userId)} 오류 발생 (상세 표시 실패)`.trim(),
+                blocks: [],
+              });
+            } catch (retryError) {
+              console.error(`[${new Date().toISOString()}] 최소 에러 메시지 표시도 실패:`, retryError);
+            }
+          }
           activeMessages.delete(messageKey);
         },
       },
