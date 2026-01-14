@@ -348,8 +348,8 @@ app.action<BlockAction<ButtonAction>>("cancel_queued", async ({ body, ack, clien
 // 오래된 세션 및 큐 정리 (30분마다)
 setInterval(
   () => {
-    sessionManager.cleanupOldSessions(48 * 60 * 60 * 1000); // 48시간 이상된 세션 정리
-    threadQueueManager.cleanupOldThreads(48 * 60 * 60 * 1000); // 48시간 이상된 큐 정리
+    sessionManager.cleanupOldSessions(168 * 60 * 60 * 1000); // 168시간(1주일) 이상된 세션 정리
+    threadQueueManager.cleanupOldThreads(168 * 60 * 60 * 1000); // 168시간(1주일) 이상된 큐 정리
   },
   30 * 60 * 1000,
 );
