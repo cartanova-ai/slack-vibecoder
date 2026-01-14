@@ -269,7 +269,8 @@ app.action<BlockAction<ButtonAction>>("process_now", async ({ body, ack, client 
   if (currentHandler) {
     abortSession(threadTs);
     await currentHandler.showAborted();
-    threadQueueManager.finishProcessing(threadTs);
+    // 큐는 건드리지 않고 처리 상태만 리셋 (다른 큐 항목 보존)
+    threadQueueManager.resetProcessingState(threadTs);
   }
 
   // 해당 메시지 즉시 처리 시작

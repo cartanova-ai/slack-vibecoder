@@ -124,6 +124,22 @@ class ThreadQueueManager {
   }
 
   /**
+   * 처리 상태만 리셋합니다 (큐는 건드리지 않음).
+   *
+   * 즉시처리 등으로 현재 작업을 abort할 때 사용합니다.
+   */
+  resetProcessingState(threadTs: string): void {
+    const state = this.threads.get(threadTs);
+    if (!state) {
+      return;
+    }
+
+    state.isProcessing = false;
+    state.currentHandler = null;
+    state.currentMessageId = null;
+  }
+
+  /**
    * 메시지를 큐에 추가합니다.
    *
    * 반환값: 큐 내 위치 (1-based)
