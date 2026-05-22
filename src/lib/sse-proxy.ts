@@ -65,8 +65,6 @@ export async function createSseProxy(): Promise<SseProxy> {
     const url = new URL(req.url ?? "/", UPSTREAM);
     const isMessages = req.url?.includes("/v1/messages") && req.method === "POST";
 
-    console.log(`[sse-proxy] ${req.method} ${req.url}`);
-
     const reqChunks: Buffer[] = [];
     req.on("data", (c: Buffer) => reqChunks.push(c));
     req.on("end", () => {
@@ -81,9 +79,7 @@ export async function createSseProxy(): Promise<SseProxy> {
       if (isMessages) {
         try {
           const parsed = JSON.parse(body.toString());
-          const toolCount = parsed.tools?.length ?? 0;
-          isConversation = toolCount > 0;
-          console.log(`[sse-proxy] POST /v1/messages: tools=${toolCount}, isConversation=${isConversation}`);
+          isConversation = (parsed.tools?.length ?? 0) > 0;
         } catch {}
       }
 
@@ -111,9 +107,7 @@ export async function createSseProxy(): Promise<SseProxy> {
                 const jsonStr = line.slice(6).trim();
                 if (!jsonStr) continue;
                 try {
-                  const parsed = JSON.parse(jsonStr);
-                  console.log(`[sse-proxy] SSE event: ${parsed.type}`);
-                  pushEvent?.(parsed);
+                  pushEvent?.(JSON.parse(jsonStr));
                 } catch {}
               }
             });
