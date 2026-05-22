@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 interface Session {
   claudeSessionId: string;
+  hasBeenUsed: boolean;
   abortController: AbortController;
   createdAt: Date;
   lastActivity: Date;
@@ -25,6 +26,7 @@ class SessionManager {
     if (!session) {
       session = {
         claudeSessionId: randomUUID(),
+        hasBeenUsed: false,
         abortController: new AbortController(),
         createdAt: new Date(),
         lastActivity: new Date(),
@@ -39,13 +41,10 @@ class SessionManager {
     return session;
   }
 
-  /**
-   * 세션의 Claude 세션 ID를 업데이트합니다.
-   */
-  updateClaudeSessionId(threadTs: string, sessionId: string): void {
+  markSessionUsed(threadTs: string): void {
     const session = this.sessions.get(threadTs);
     if (session) {
-      session.claudeSessionId = sessionId;
+      session.hasBeenUsed = true;
     }
   }
 

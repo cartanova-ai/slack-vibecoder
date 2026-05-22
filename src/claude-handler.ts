@@ -51,8 +51,10 @@ export async function handleClaudeQuery(
     const stream = queryInteractive(prompt, {
       cwd: process.env.CLAUDE_CWD,
       sessionId: session.claudeSessionId,
+      isResume: session.hasBeenUsed,
       signal: abortSignal,
     });
+    sessionManager.markSessionUsed(threadTs);
 
     for await (const event of stream) {
       if (abortSignal.aborted) break;

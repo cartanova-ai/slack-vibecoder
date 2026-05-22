@@ -10,13 +10,25 @@ export type ClaudeEvent =
 export interface QueryOptions {
   cwd?: string;
   sessionId?: string;
+  isResume?: boolean;
   signal?: AbortSignal;
 }
 
-function buildArgs(prompt: string, sessionId?: string): string[] {
-  const args: string[] = [];
+function buildArgs(
+  prompt: string,
+  sessionId?: string,
+  isResume?: boolean,
+): string[] {
+  const args: string[] = [
+    "--permission-mode",
+    "bypassPermissions",
+  ];
   if (sessionId) {
-    args.push("--resume", sessionId);
+    if (isResume) {
+      args.push("--resume", sessionId);
+    } else {
+      args.push("--session-id", sessionId);
+    }
   }
   args.push(prompt);
   return args;
@@ -27,7 +39,7 @@ export async function* queryInteractive(
   options: QueryOptions = {},
 ): AsyncGenerator<ClaudeEvent> {
   const proxy = await createSseProxy();
-  const args = buildArgs(prompt, options.sessionId);
+  const args = buildArgs(prompt, options.sessionId, options.isResume);
   const ptyHandle = spawnClaude(args, {
     cwd: options.cwd,
     proxyPort: proxy.port,
