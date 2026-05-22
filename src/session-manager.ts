@@ -3,8 +3,16 @@
  * 슬랙 스레드 ID(thread_ts)를 키로 사용하여 Claude 세션을 관리합니다.
  */
 
+import { randomUUID } from "node:crypto";
+
 interface Session {
-  claudeSessionId: string | null;
+  // 세션 생성 시 UUID를 미리 발급합니다. 기존 SDK는 API 응답에서 session_id를 받았지만,
+  // PTY 인터랙티브 모드에서는 API 응답을 직접 읽을 수 없으므로 우리가 먼저 지정합니다.
+  // 첫 요청: --session-id <uuid>, 이후 요청: --resume <uuid>
+  claudeSessionId: string;
+  // 첫 요청과 이후 요청에서 CLI 인자가 다릅니다 (--session-id vs --resume).
+  // --resume은 기존 세션이 디스크에 존재해야 하므로, 첫 사용 여부를 추적합니다.
+  hasBeenUsed: boolean;
   abortController: AbortController;
   createdAt: Date;
   lastActivity: Date;
@@ -19,28 +27,28 @@ class SessionManager {
    */
   getOrCreateSession(threadTs: string): Session {
     let session = this.sessions.get(threadTs);
-
     if (!session) {
       session = {
-        claudeSessionId: null,
+        claudeSessionId: randomUUID(),
+        hasBeenUsed: false,
         abortController: new AbortController(),
         createdAt: new Date(),
         lastActivity: new Date(),
       };
       this.sessions.set(threadTs, session);
+      console.log(
+        `[${new Date().toISOString()}] 🆕 새 세션 생성: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`,
+      );
     }
 
     session.lastActivity = new Date();
     return session;
   }
 
-  /**
-   * 세션의 Claude 세션 ID를 업데이트합니다.
-   */
-  updateClaudeSessionId(threadTs: string, sessionId: string): void {
+  markSessionUsed(threadTs: string): void {
     const session = this.sessions.get(threadTs);
     if (session) {
-      session.claudeSessionId = sessionId;
+      session.hasBeenUsed = true;
     }
   }
 
