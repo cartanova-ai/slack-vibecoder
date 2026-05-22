@@ -95,6 +95,47 @@ export function splitTextForSlack(text: string, maxLength: number = MAX_TEXT_LEN
   return chunks;
 }
 
+/**
+ * 표준 Markdown을 Slack mrkdwn으로 변환합니다.
+ * 코드 블록(```) 내부는 변환하지 않습니다.
+ */
+export function markdownToSlackMrkdwn(text: string): string {
+  const codeBlocks: string[] = [];
+
+  // 코드 블록을 플레이스홀더로 치환
+  let result = text.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlocks.push(match);
+    return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+  });
+
+  // 인라인 코드도 보호
+  const inlineCodes: string[] = [];
+  result = result.replace(/`[^`]+`/g, (match) => {
+    inlineCodes.push(match);
+    return `__INLINE_CODE_${inlineCodes.length - 1}__`;
+  });
+
+  // ## 헤더 → *헤더* (볼드)
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
+
+  // **볼드** → *볼드*
+  result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
+
+  // [텍스트](url) → <url|텍스트>
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
+
+  // --- 수평선 → 빈 줄
+  result = result.replace(/^---+$/gm, "");
+
+  // 인라인 코드 복원
+  result = result.replace(/__INLINE_CODE_(\d+)__/g, (_, i) => inlineCodes[Number(i)]);
+
+  // 코드 블록 복원
+  result = result.replace(/__CODE_BLOCK_(\d+)__/g, (_, i) => codeBlocks[Number(i)]);
+
+  return result;
+}
+
 // ============================================================================
 // 블록 빌더들
 // ============================================================================
@@ -196,7 +237,8 @@ export function buildProgressMessage(
   const userTag = userMention ? `${userMention} ⏳ 작업 중...` : "⏳ 작업 중...";
   const overhead = userTag.length + toolInfoText.length + 10;
   const maxTextLength = MAX_TEXT_LENGTH - overhead;
-  const truncatedText = truncateForSlack(text, maxTextLength);
+  const converted = markdownToSlackMrkdwn(text);
+  const truncatedText = truncateForSlack(converted, maxTextLength);
   const quotedText = truncatedText ? `> ${truncatedText.split("\n").join("\n> ")}` : "";
   const messageText = `${userTag}\n\n${toolInfoText}${quotedText}`;
 
@@ -225,10 +267,11 @@ export function buildResultMessage(
   const userMention = getUserMention(userId);
   const timeStr = formatDuration(durationSeconds);
 
-  // 텍스트를 청크로 분할
+  // markdown → slack mrkdwn 변환 후 청크로 분할
+  const converted = markdownToSlackMrkdwn(text);
   const overhead = userMention.length + 10;
   const maxChunkLength = MAX_TEXT_LENGTH - overhead;
-  const chunks = splitTextForSlack(text, maxChunkLength);
+  const chunks = splitTextForSlack(converted, maxChunkLength);
 
   // 첫 번째 청크 메시지
   const firstChunkText = userMention ? `${userMention}\n\n${chunks[0]}` : chunks[0];
