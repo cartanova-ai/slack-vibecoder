@@ -67,7 +67,13 @@ export function spawnClaude(
 
   // PTY stdout은 ANSI escape가 섞인 TUI 출력입니다. 읽지 않으면 버퍼가 차서
   // 프로세스가 멈추므로, 비워주기만 합니다. 실제 응답은 SSE 프록시에서 캡처합니다.
-  proc.onData(() => {});
+  // 단, "trust this folder" 다이얼로그가 뜨면 Enter를 보내 자동 수락합니다.
+  // 이 다이얼로그는 인터랙티브 모드에서만 나타나며, --dangerously-skip-permissions로도 스킵 불가합니다.
+  proc.onData((data: string) => {
+    if (data.includes("trust") || data.includes("Trust")) {
+      proc.write("\r");
+    }
+  });
 
   const onExit = new Promise<{ exitCode: number; signal: number }>((resolve) => {
     proc.onExit(({ exitCode, signal }) => {
