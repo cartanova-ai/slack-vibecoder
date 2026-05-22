@@ -304,17 +304,22 @@ export class ResponseHandler {
    */
   async showAborted(): Promise<void> {
     this.stopTimer();
+    this.isCompleted = true;
 
     if (!this.responseTs) {
       return;
     }
 
-    const { blocks, fallbackText } = buildAbortedMessage(this.userId);
+    const abortNotice = buildTextBlock(`\n⏹️ _작업이 중단되었습니다._`);
+    const blocksWithoutButtons = this.lastBlocks.filter(
+      (b) => (b as { type?: string }).type !== "actions",
+    );
+    const blocks = [...blocksWithoutButtons, abortNotice];
 
     await this.client.chat.update({
       channel: this.channel,
       ts: this.responseTs,
-      text: fallbackText,
+      text: this.lastFallbackText || "작업이 중단되었습니다.",
       blocks,
     });
   }

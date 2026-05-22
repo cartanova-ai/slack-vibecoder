@@ -197,7 +197,7 @@ export function buildProgressMessage(
   const overhead = userTag.length + toolInfoText.length + 10;
   const maxTextLength = MAX_TEXT_LENGTH - overhead;
   const truncatedText = truncateForSlack(text, maxTextLength);
-  const messageText = `${userTag}\n\n${toolInfoText}> ${truncatedText}`;
+  const messageText = `${userTag}\n\n${toolInfoText}${truncatedText}`;
 
   const blocks = [
     buildMetadataBlock(timeStr, toolCallCount, "경과"),
