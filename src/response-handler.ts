@@ -310,10 +310,27 @@ export class ResponseHandler {
       return;
     }
 
-    const abortNotice = buildTextBlock(`\n⏹️ _작업이 중단되었습니다._`);
-    const blocksWithoutButtons = this.lastBlocks.filter(
+    // 마지막 블록에서 버튼 제거 + 메타데이터 시간을 현재 경과 시간으로 갱신합니다.
+    // this.lastBlocks의 메타데이터는 마지막 onProgress 시점 값이라 오래됐을 수 있습니다.
+    const elapsedSeconds = Math.round((Date.now() - this.startTime) / 1000);
+    const timeStr = formatDuration(elapsedSeconds);
+
+    const frozenBlocks = JSON.parse(JSON.stringify(this.lastBlocks)) as SlackBlock[];
+    const blocksWithoutButtons = frozenBlocks.filter(
       (b) => (b as { type?: string }).type !== "actions",
     );
+    for (const block of blocksWithoutButtons) {
+      const b = block as { type?: string; elements?: { type?: string; text?: string }[] };
+      if (b.type === "context" && Array.isArray(b.elements)) {
+        for (const el of b.elements) {
+          if (el.type === "mrkdwn" && typeof el.text === "string") {
+            el.text = el.text.replace(/^_\d+분?\s*\d*초?\s*경과/, `_${timeStr} 소요`);
+          }
+        }
+      }
+    }
+
+    const abortNotice = buildTextBlock(`\n⏹️ _작업이 중단되었습니다._`);
     const blocks = [...blocksWithoutButtons, abortNotice];
 
     await this.client.chat.update({
