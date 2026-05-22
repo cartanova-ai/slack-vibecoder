@@ -14,74 +14,78 @@ export interface QueryOptions {
   signal?: AbortSignal;
 }
 
-function buildArgs(
-  prompt: string,
-  sessionId?: string,
-  isResume?: boolean,
-): string[] {
-  const args: string[] = [
-    "--permission-mode",
-    "bypassPermissions",
-  ];
+function buildArgs(prompt: string, sessionId?: string, isResume?: boolean): string[] {
+  const args: string[] = ["--permission-mode", "bypassPermissions"];
   if (sessionId) {
-    if (isResume) {
-      args.push("--resume", sessionId);
-    } else {
-      args.push("--session-id", sessionId);
-    }
+    args.push(isResume ? "--resume" : "--session-id", sessionId);
   }
   args.push(prompt);
   return args;
 }
 
+/**
+ * Claude CLI를 인터랙티브 모드로 실행하고 SSE 이벤트를 파싱합니다.
+ *
+ * 이벤트 흐름 (claude -p의 stream-json과 동일하게):
+ * - tool_use: 도구 호출 시 즉시 yield (이름 + input)
+ * - text: end_turn 메시지의 전체 텍스트를 한 번만 yield
+ * - result: 최종 텍스트 + 세션 ID + 토큰 수
+ *
+ * 내부적으로 메시지 단위(message_start ~ message_stop) 상태 머신으로 동작.
+ * - tool_use 턴의 텍스트는 무시 (중간 말: "검색하겠습니다" 등)
+ * - end_turn 턴의 텍스트 블록들을 합쳐서 최종 응답으로 사용
+ * - suggestion/타이틀 등 후속 API 호출은 end_turn 이후 무시
+ */
 export async function* queryInteractive(
   prompt: string,
   options: QueryOptions = {},
 ): AsyncGenerator<ClaudeEvent> {
   const proxy = await createSseProxy();
-  const args = buildArgs(prompt, options.sessionId, options.isResume);
-  const ptyHandle = spawnClaude(args, {
+  const ptyHandle = spawnClaude(buildArgs(prompt, options.sessionId, options.isResume), {
     cwd: options.cwd,
     proxyPort: proxy.port,
     signal: options.signal,
   });
 
+  // 현재 메시지(API 응답) 내 상태
   let currentToolName = "";
   let currentToolInput = "";
   let textBuffer = "";
-  let lastTextYielded = "";
+  let messageTextParts: string[] = [];
+
+  // 전체 세션 상태
   let outputTokens = 0;
-  let finished = false;
+  let finalText = "";
+  let done = false;
 
   try {
-    ptyHandle.onExit.then(() => {
-      setTimeout(() => proxy.close(), 500);
-    });
+    ptyHandle.onExit.then(() => setTimeout(() => proxy.close(), 500));
 
     for await (const event of proxy.events) {
-      if (options.signal?.aborted || finished) break;
+      if (options.signal?.aborted || done) break;
 
       switch (event.type) {
+        case "message_start": {
+          // 새 API 응답 시작 — 메시지 내 상태 초기화
+          currentToolName = "";
+          currentToolInput = "";
+          textBuffer = "";
+          messageTextParts = [];
+          break;
+        }
+
         case "content_block_start": {
-          const block = (event as SseEvent).content_block as {
-            type: string;
-            name?: string;
-          };
+          const block = event.content_block as { type: string; name?: string } | undefined;
           if (block?.type === "tool_use") {
             currentToolName = block.name ?? "";
             currentToolInput = "";
-          } else if (block?.type === "text") {
-            textBuffer = "";
           }
+          textBuffer = "";
           break;
         }
 
         case "content_block_delta": {
-          const delta = (event as SseEvent).delta as {
-            type: string;
-            text?: string;
-            partial_json?: string;
-          };
+          const delta = event.delta as { type: string; text?: string; partial_json?: string } | undefined;
           if (delta?.type === "text_delta" && delta.text) {
             textBuffer += delta.text;
           } else if (delta?.type === "input_json_delta" && delta.partial_json) {
@@ -93,36 +97,36 @@ export async function* queryInteractive(
         case "content_block_stop": {
           if (currentToolName) {
             let input: Record<string, unknown> = {};
-            try {
-              input = JSON.parse(currentToolInput || "{}");
-            } catch {}
+            try { input = JSON.parse(currentToolInput || "{}"); } catch {}
             yield { type: "tool_use", name: currentToolName, input };
             currentToolName = "";
             currentToolInput = "";
-          } else if (textBuffer) {
-            yield { type: "text", text: textBuffer };
-            lastTextYielded = textBuffer;
+          } else if (textBuffer.trim()) {
+            messageTextParts.push(textBuffer);
           }
+          textBuffer = "";
           break;
         }
 
         case "message_delta": {
-          const delta = (event as SseEvent).delta as {
-            stop_reason?: string;
-          };
-          const usage = (event as SseEvent).usage as {
-            output_tokens?: number;
-          };
-          if (delta?.stop_reason === "end_turn") {
-            finished = true;
+          const md = event as SseEvent;
+          const stopReason = (md.delta as { stop_reason?: string })?.stop_reason;
+          outputTokens = (md.usage as { output_tokens?: number })?.output_tokens ?? outputTokens;
+
+          if (stopReason === "end_turn") {
+            // 최종 턴 완료. 이 메시지의 텍스트를 합쳐서 yield.
+            finalText = messageTextParts.join("\n").trim();
+            if (finalText) {
+              yield { type: "text", text: finalText };
+            }
+            done = true;
           }
-          outputTokens = usage?.output_tokens ?? outputTokens;
+          // tool_use 턴: 텍스트는 버림 (다음 message_start에서 초기화됨)
           break;
         }
 
         case "message_stop": {
-          if (finished) {
-            // end_turn 완료 → suggestion 등 후속 API 호출 무시하고 즉시 종료
+          if (done) {
             setTimeout(() => ptyHandle.kill(), 2000);
           }
           break;
@@ -130,7 +134,6 @@ export async function* queryInteractive(
       }
     }
 
-    const finalText = (lastTextYielded || textBuffer).trim();
     yield {
       type: "result",
       text: finalText,

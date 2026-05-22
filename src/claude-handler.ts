@@ -83,7 +83,7 @@ export async function handleClaudeQuery(
         }
 
         case "text": {
-          progressText = event.text.trim();
+          progressText = event.text;
           const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
           await callbacks.onProgress(progressText, currentToolInfo, elapsedSeconds, toolCallCount);
           break;
