@@ -51,18 +51,15 @@ export async function* queryInteractive(
   let textBuffer = "";
   let lastTextYielded = "";
   let outputTokens = 0;
-  let lastStopReason = "";
-  let endTurnTimer: ReturnType<typeof setTimeout> | null = null;
+  let finished = false;
 
   try {
-    const exitPromise = ptyHandle.onExit.then((result) => {
-      // PTY 종료 시 프록시 이벤트 스트림도 종료
+    ptyHandle.onExit.then(() => {
       setTimeout(() => proxy.close(), 500);
-      return result;
     });
 
     for await (const event of proxy.events) {
-      if (options.signal?.aborted) break;
+      if (options.signal?.aborted || finished) break;
 
       switch (event.type) {
         case "content_block_start": {
@@ -116,28 +113,27 @@ export async function* queryInteractive(
           const usage = (event as SseEvent).usage as {
             output_tokens?: number;
           };
-          lastStopReason = delta?.stop_reason ?? "";
+          if (delta?.stop_reason === "end_turn") {
+            finished = true;
+          }
           outputTokens = usage?.output_tokens ?? outputTokens;
           break;
         }
 
         case "message_stop": {
-          if (lastStopReason === "end_turn") {
-            // 최종 턴 완료. stop hook 등 마무리 대기 후 PTY kill.
-            endTurnTimer = setTimeout(() => {
-              ptyHandle.kill();
-            }, 2000);
+          if (finished) {
+            // end_turn 완료 → suggestion 등 후속 API 호출 무시하고 즉시 종료
+            setTimeout(() => ptyHandle.kill(), 2000);
           }
-          // tool_use 턴이면 CLI가 도구를 실행하고 다음 API 호출을 자동으로 함.
-          // proxy.events가 계속 이어지므로 루프가 계속됨.
           break;
         }
       }
     }
 
+    const finalText = (lastTextYielded || textBuffer).trim();
     yield {
       type: "result",
-      text: lastTextYielded || textBuffer,
+      text: finalText,
       sessionId: options.sessionId ?? "",
       outputTokens,
     };
@@ -147,7 +143,6 @@ export async function* queryInteractive(
       error: err instanceof Error ? err : new Error(String(err)),
     };
   } finally {
-    if (endTurnTimer) clearTimeout(endTurnTimer);
     ptyHandle.kill();
     proxy.close();
   }
