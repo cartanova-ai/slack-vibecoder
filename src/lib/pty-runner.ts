@@ -1,15 +1,36 @@
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import * as pty from "node-pty";
 
 let claudePath: string | null = null;
 
 function findClaude(): string {
   if (claudePath) return claudePath;
+
+  // 1. which로 찾기 (PATH에 있을 때)
   try {
     claudePath = execSync("which claude", { encoding: "utf-8" }).trim();
-  } catch {
-    claudePath = "/usr/local/bin/claude";
+    return claudePath;
+  } catch {}
+
+  // 2. 현재 node 바이너리와 같은 디렉토리에서 찾기 (nvm/pm2 환경 대응)
+  const nodeBinDir = dirname(process.execPath);
+  const candidate = join(nodeBinDir, "claude");
+  if (existsSync(candidate)) {
+    claudePath = candidate;
+    return claudePath;
   }
+
+  // 3. 흔한 경로들
+  for (const p of ["/usr/local/bin/claude", "/usr/bin/claude"]) {
+    if (existsSync(p)) {
+      claudePath = p;
+      return claudePath;
+    }
+  }
+
+  claudePath = "claude";
   return claudePath;
 }
 
