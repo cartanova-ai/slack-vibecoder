@@ -3,8 +3,10 @@
  * 슬랙 스레드 ID(thread_ts)를 키로 사용하여 Claude 세션을 관리합니다.
  */
 
+import { randomUUID } from "node:crypto";
+
 interface Session {
-  claudeSessionId: string | null;
+  claudeSessionId: string;
   abortController: AbortController;
   createdAt: Date;
   lastActivity: Date;
@@ -22,12 +24,15 @@ class SessionManager {
 
     if (!session) {
       session = {
-        claudeSessionId: null,
+        claudeSessionId: randomUUID(),
         abortController: new AbortController(),
         createdAt: new Date(),
         lastActivity: new Date(),
       };
       this.sessions.set(threadTs, session);
+      console.log(
+        `[${new Date().toISOString()}] 🆕 새 세션 생성: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`,
+      );
     }
 
     session.lastActivity = new Date();
