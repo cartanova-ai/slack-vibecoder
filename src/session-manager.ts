@@ -22,6 +22,9 @@ class SessionManager {
    */
   getOrCreateSession(threadTs: string): Session {
     let session = this.sessions.get(threadTs);
+    console.log(
+      `[session-manager] getOrCreateSession("${threadTs}") → ${session ? `기존 (${session.claudeSessionId.substring(0, 12)}..., used=${session.hasBeenUsed})` : "없음 → 새로 생성"} [map size=${this.sessions.size}, keys=${[...this.sessions.keys()].join(",")}]`,
+    );
 
     if (!session) {
       session = {
