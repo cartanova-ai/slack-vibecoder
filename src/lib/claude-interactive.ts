@@ -26,7 +26,7 @@ export interface QueryOptions {
 }
 
 function buildArgs(prompt: string, sessionId?: string, isResume?: boolean): string[] {
-  const args: string[] = ["--permission-mode", "bypassPermissions"];
+  const args: string[] = ["--dangerously-skip-permissions"];
   if (sessionId) {
     args.push(isResume ? "--resume" : "--session-id", sessionId);
   }
