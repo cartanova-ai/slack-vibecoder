@@ -6,7 +6,12 @@
 import { randomUUID } from "node:crypto";
 
 interface Session {
+  // 세션 생성 시 UUID를 미리 발급합니다. 기존 SDK는 API 응답에서 session_id를 받았지만,
+  // PTY 인터랙티브 모드에서는 API 응답을 직접 읽을 수 없으므로 우리가 먼저 지정합니다.
+  // 첫 요청: --session-id <uuid>, 이후 요청: --resume <uuid>
   claudeSessionId: string;
+  // 첫 요청과 이후 요청에서 CLI 인자가 다릅니다 (--session-id vs --resume).
+  // --resume은 기존 세션이 디스크에 존재해야 하므로, 첫 사용 여부를 추적합니다.
   hasBeenUsed: boolean;
   abortController: AbortController;
   createdAt: Date;

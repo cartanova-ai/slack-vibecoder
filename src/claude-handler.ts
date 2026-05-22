@@ -54,6 +54,8 @@ export async function handleClaudeQuery(
       isResume: session.hasBeenUsed,
       signal: abortSignal,
     });
+    // 스트림 생성 직후에 마킹해야 합니다. 요청이 실패하더라도
+    // CLI가 세션을 디스크에 기록하므로 다음 요청은 --resume이어야 합니다.
     sessionManager.markSessionUsed(threadTs);
 
     for await (const event of stream) {
@@ -83,6 +85,8 @@ export async function handleClaudeQuery(
         }
 
         case "progress": {
+          // progress는 도구 호출 턴의 중간 텍스트("검색하겠습니다" 등)입니다.
+          // 최종 응답(text)이 오면 교체되므로, 여기서는 표시용으로만 사용합니다.
           progressText = event.text;
           const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
           await callbacks.onProgress(progressText, currentToolInfo, elapsedSeconds, toolCallCount);
@@ -90,6 +94,8 @@ export async function handleClaudeQuery(
         }
 
         case "text": {
+          // text는 end_turn에서 한 번만 오며, 전체 누적 응답이 담겨 있습니다.
+          // progress와 달리 조각이 아닌 완성본이므로 이것이 최종 표시 텍스트입니다.
           progressText = event.text;
           const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
           await callbacks.onProgress(progressText, currentToolInfo, elapsedSeconds, toolCallCount);

@@ -48,10 +48,15 @@ export async function* queryInteractive(
   let currentToolName = "";
   let currentToolInput = "";
 
-  // 현재 API 응답(메시지) 내 텍스트 — text_delta를 바로 누적
+  // 현재 API 응답(메시지) 내 텍스트입니다. content block 경계 없이 text_delta를 바로 누적합니다.
+  // 배열로 모아서 join하면 Claude가 "-"와 내용을 별도 content block으로 보낼 때
+  // 불필요한 줄바꿈이 끼는 문제가 있었습니다.
   let messageText = "";
 
-  // 턴 간 누적 (마지막 tool_use 이후)
+  // 마지막 tool_use 이후의 텍스트를 API 턴 간에 누적합니다.
+  // 인터랙티브 모드에서는 최종 응답이 여러 API 턴에 걸쳐 조각으로 오기 때문에,
+  // 이렇게 누적해야 end_turn 시점에 전체 응답을 조립할 수 있습니다.
+  // tool_use가 나오면 리셋합니다 (중간 말은 최종 응답에 포함하지 않습니다).
   let accumulatedText = "";
   let outputTokens = 0;
   let done = false;
@@ -130,6 +135,9 @@ export async function* queryInteractive(
 
         case "message_stop": {
           if (done) {
+            // stop hook 등 CLI 내부 마무리 작업을 위해 2초 대기 후 kill합니다.
+            // 이 시간 동안 suggestion 등 후속 API 호출이 올 수 있지만,
+            // done=true이므로 for-await 루프에서 무시됩니다.
             setTimeout(() => ptyHandle.kill(), 2000);
           }
           break;
