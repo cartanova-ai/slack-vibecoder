@@ -374,10 +374,15 @@ export class ResponseHandler {
     args: { channel: string; ts: string; text: string; blocks?: SlackBlock[] },
   ): Promise<void> {
     const logger = getSlackLogger();
-    const textPreview = args.text.slice(0, 120);
-    const blockCount = args.blocks?.length ?? 0;
-    logger.log({ caller, threadTs: this.threadTs, msgTs: args.ts, textPreview, blockCount });
-    await this.client.chat.update(args);
+    logger.log({ phase: "request", caller, threadTs: this.threadTs, payload: args });
+    try {
+      await this.client.chat.update(args);
+      logger.log({ phase: "success", caller, threadTs: this.threadTs, msgTs: args.ts });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.log({ phase: "failure", caller, threadTs: this.threadTs, msgTs: args.ts, error: message });
+      throw error;
+    }
   }
 
   /**

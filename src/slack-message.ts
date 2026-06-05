@@ -124,8 +124,11 @@ export function markdownToSlackMrkdwn(text: string): string {
   // [텍스트](url) → <url|텍스트>
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
 
-  // --- 수평선 → 빈 줄
+  // --- 수평선 제거
   result = result.replace(/^---+$/gm, "");
+
+  // 연속 빈 줄을 최대 1개로 정리 (수평선 제거 등으로 생긴 빈 줄 폭주 방지)
+  result = result.replace(/\n{3,}/g, "\n\n");
 
   // 인라인 코드 복원
   result = result.replace(/__INLINE_CODE_(\d+)__/g, (_, i) => inlineCodes[Number(i)]);
