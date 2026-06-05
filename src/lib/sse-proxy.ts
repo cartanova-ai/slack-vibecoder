@@ -82,26 +82,18 @@ export async function createSseProxy(): Promise<SseProxy> {
       // 인터랙티브 모드에서는 quota 체크(max_tokens=1), 타이틀 생성, suggestion 등
       // 부가 API 호출이 발생합니다. 이들은 tools가 0개이므로 이 조건으로 걸러냅니다.
       let isConversation = false;
+      let isSubagent = false;
       if (isMessages) {
         try {
           const parsed = JSON.parse(body.toString());
           isConversation = (parsed.tools?.length ?? 0) > 0;
 
-          // 서브에이전트 구분을 위한 request body 조사 로깅
           if (isConversation) {
-            const systemSnippet = typeof parsed.system === "string"
-              ? parsed.system.slice(0, 200)
-              : Array.isArray(parsed.system)
-                ? JSON.stringify(parsed.system.map((s: { text?: string }) => s.text?.slice(0, 100)))
-                : null;
-            logger.log(JSON.stringify({
-              _req: true,
-              model: parsed.model,
-              metadata: parsed.metadata,
-              toolCount: parsed.tools?.length,
-              msgCount: parsed.messages?.length,
-              systemSnippet,
-            }));
+            // 시스템 프롬프트의 billing header에 cc_is_subagent=true가 있으면 서브에이전트
+            const systemTexts: string[] = Array.isArray(parsed.system)
+              ? parsed.system.map((s: { text?: string }) => s.text ?? "")
+              : [String(parsed.system ?? "")];
+            isSubagent = systemTexts.some((t: string) => t.includes("cc_is_subagent=tru"));
           }
         } catch {}
       }
@@ -122,6 +114,9 @@ export async function createSseProxy(): Promise<SseProxy> {
 
             proxyRes.on("data", (chunk: Buffer) => {
               res.write(chunk);
+
+              // 서브에이전트 응답은 CLI로 전달하되 이벤트 큐에는 넣지 않음
+              if (isSubagent) return;
 
               buffer += chunk.toString();
               const lines = buffer.split("\n");
