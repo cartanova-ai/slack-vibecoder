@@ -5,6 +5,7 @@
  * app.ts에서 복잡한 콜백/타이머 로직을 분리하여 가독성 향상.
  */
 
+import { getSlackLogger } from "./lib/debug-logger";
 import {
   buildAbortedMessage,
   buildErrorMessage,
@@ -114,7 +115,7 @@ export class ResponseHandler {
     this.lastFallbackText = fallbackText;
 
     try {
-      await this.client.chat.update({
+      await this.loggedUpdate("startWithExisting", {
         channel: this.channel,
         ts: existingTs,
         text: fallbackText,
@@ -157,7 +158,7 @@ export class ResponseHandler {
     this.lastFallbackText = fallbackText;
 
     try {
-      await this.client.chat.update({
+      await this.loggedUpdate("progress", {
         channel: this.channel,
         ts: this.responseTs,
         text: fallbackText,
@@ -196,7 +197,7 @@ export class ResponseHandler {
       const { blocks, fallbackText } = buildErrorMessage(this.userId, errorMessage);
 
       try {
-        await this.client.chat.update({
+        await this.loggedUpdate("showError-inner", {
           channel: this.channel,
           ts: this.responseTs!,
           text: fallbackText,
@@ -209,7 +210,7 @@ export class ResponseHandler {
 
     // 첫 번째 청크: 기존 메시지 업데이트
     try {
-      await this.client.chat.update({
+      await this.loggedUpdate("result", {
         channel: this.channel,
         ts: this.responseTs,
         text: firstMessage.fallbackText,
@@ -243,7 +244,7 @@ export class ResponseHandler {
     // Quick fix: 1초 후에 첫 메시지 한 번 더 업데이트 (race condition 방지)
     setTimeout(async () => {
       try {
-        await this.client.chat.update({
+        await this.loggedUpdate("result-retry", {
           channel: this.channel,
           ts: this.responseTs!,
           text: firstMessage.fallbackText,
@@ -276,7 +277,7 @@ export class ResponseHandler {
     this.lastFallbackText = fallbackText;
 
     try {
-      await this.client.chat.update({
+      await this.loggedUpdate("error", {
         channel: this.channel,
         ts: this.responseTs,
         text: fallbackText,
@@ -285,9 +286,8 @@ export class ResponseHandler {
     } catch (updateError) {
       console.error(`[${new Date().toISOString()}] onError chat.update 실패:`, updateError);
 
-      // 최소한의 메시지라도 시도
       try {
-        await this.client.chat.update({
+        await this.loggedUpdate("error-fallback", {
           channel: this.channel,
           ts: this.responseTs,
           text: `${getUserMention(this.userId)} 오류 발생 (상세 표시 실패)`.trim(),
@@ -333,7 +333,7 @@ export class ResponseHandler {
     const abortNotice = buildTextBlock(`\n⏹️ _작업이 중단되었습니다._`);
     const blocks = [...blocksWithoutButtons, abortNotice];
 
-    await this.client.chat.update({
+    await this.loggedUpdate("aborted", {
       channel: this.channel,
       ts: this.responseTs,
       text: this.lastFallbackText || "작업이 중단되었습니다.",
@@ -368,6 +368,17 @@ export class ResponseHandler {
   // ============================================================================
   // Private
   // ============================================================================
+
+  private async loggedUpdate(
+    caller: string,
+    args: { channel: string; ts: string; text: string; blocks?: SlackBlock[] },
+  ): Promise<void> {
+    const logger = getSlackLogger();
+    const textPreview = args.text.slice(0, 120);
+    const blockCount = args.blocks?.length ?? 0;
+    logger.log({ caller, threadTs: this.threadTs, msgTs: args.ts, textPreview, blockCount });
+    await this.client.chat.update(args);
+  }
 
   /**
    * 메타데이터(시간)만 업데이트합니다. (타이머 콜백용)
@@ -413,7 +424,7 @@ export class ResponseHandler {
     }
 
     try {
-      await this.client.chat.update({
+      await this.loggedUpdate("metadata", {
         channel: this.channel,
         ts: this.responseTs,
         text: this.lastFallbackText,

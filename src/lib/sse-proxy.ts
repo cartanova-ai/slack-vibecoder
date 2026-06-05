@@ -3,6 +3,8 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { URL } from "node:url";
 
+import { createFileLogger } from "./debug-logger";
+
 const UPSTREAM = "https://api.anthropic.com";
 
 export interface SseEvent {
@@ -17,6 +19,7 @@ export interface SseProxy {
 }
 
 export async function createSseProxy(): Promise<SseProxy> {
+  const logger = createFileLogger("sse");
   let pushEvent: ((event: SseEvent) => void) | null = null;
   let endStream: (() => void) | null = null;
   const eventQueue: SseEvent[] = [];
@@ -111,6 +114,7 @@ export async function createSseProxy(): Promise<SseProxy> {
                 if (!line.startsWith("data: ")) continue;
                 const jsonStr = line.slice(6).trim();
                 if (!jsonStr) continue;
+                logger.log(jsonStr);
                 try {
                   pushEvent?.(JSON.parse(jsonStr));
                 } catch {}
@@ -147,6 +151,7 @@ export async function createSseProxy(): Promise<SseProxy> {
     port,
     events: generateEvents(),
     close() {
+      logger.close();
       endStream?.();
       server.close();
     },
