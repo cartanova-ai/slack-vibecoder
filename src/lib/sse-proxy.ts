@@ -86,6 +86,23 @@ export async function createSseProxy(): Promise<SseProxy> {
         try {
           const parsed = JSON.parse(body.toString());
           isConversation = (parsed.tools?.length ?? 0) > 0;
+
+          // 서브에이전트 구분을 위한 request body 조사 로깅
+          if (isConversation) {
+            const systemSnippet = typeof parsed.system === "string"
+              ? parsed.system.slice(0, 200)
+              : Array.isArray(parsed.system)
+                ? JSON.stringify(parsed.system.map((s: { text?: string }) => s.text?.slice(0, 100)))
+                : null;
+            logger.log(JSON.stringify({
+              _req: true,
+              model: parsed.model,
+              metadata: parsed.metadata,
+              toolCount: parsed.tools?.length,
+              msgCount: parsed.messages?.length,
+              systemSnippet,
+            }));
+          }
         } catch {}
       }
 
