@@ -41,6 +41,12 @@ function buildSystemPrompts(threadTs?: string, channelId?: string, slackUserId?:
 - 그래도 모르겠다면 사용자에게 질문하세요.
 - 사용자가 "너", "봇" 또는 "slack-vibecoder" 등을 명시적으로 언급한 것이 아니라면, slack-vibecoder 프로젝트를 뒤적거리면 안 됩니다.`,
 
+    `=== 오작동 진단 ===
+- 사용자가 당신(봇)의 오작동, 이상 동작, 응답 문제 등을 물어보면 slack-vibecoder 프로젝트의 debug-logs/ 디렉토리를 확인하세요.
+- debug-logs/sse-*.jsonl: Claude API로부터 수신한 SSE 이벤트 원본 (세션별 파일)
+- debug-logs/slack-updates-*.jsonl: Slack chat.update API 호출의 전체 payload와 성공/실패 여부 (날짜별 파일)
+- PM2 로그도 참고하세요: pm2 logs slack-vibecoder --lines 200 --nostream`,
+
     `=== Git 커밋 작성자 정보 ===
 커밋 시 반드시 아래 규칙을 따르세요.
 - --author="${getGitAuthor(slackUserId)}" 옵션 사용

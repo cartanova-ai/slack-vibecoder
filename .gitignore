@@ -6,3 +6,4 @@ dist/
 github-users.json
 .idea/
 debug-logs/
+thread-sessions.json

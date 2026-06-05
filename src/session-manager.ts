@@ -1,9 +1,21 @@
 /**
  * 스레드 기반 세션 관리자
  * 슬랙 스레드 ID(thread_ts)를 키로 사용하여 Claude 세션을 관리합니다.
+ * thread-sessions.json에 매핑을 영속화하여 재시작 후에도 세션을 복원합니다.
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const SESSIONS_FILE = join(process.cwd(), "thread-sessions.json");
+
+interface PersistedSession {
+  claudeSessionId: string;
+  hasBeenUsed: boolean;
+  createdAt: string;
+  lastActivity: string;
+}
 
 interface Session {
   // 세션 생성 시 UUID를 미리 발급합니다. 기존 SDK는 API 응답에서 session_id를 받았지만,
@@ -21,6 +33,50 @@ interface Session {
 class SessionManager {
   private sessions: Map<string, Session> = new Map();
 
+  constructor() {
+    this.loadFromDisk();
+  }
+
+  private loadFromDisk(): void {
+    try {
+      if (!existsSync(SESSIONS_FILE)) return;
+      const raw: Record<string, PersistedSession> = JSON.parse(readFileSync(SESSIONS_FILE, "utf-8"));
+      let loaded = 0;
+      for (const [threadTs, p] of Object.entries(raw)) {
+        this.sessions.set(threadTs, {
+          claudeSessionId: p.claudeSessionId,
+          hasBeenUsed: p.hasBeenUsed,
+          abortController: new AbortController(),
+          createdAt: new Date(p.createdAt),
+          lastActivity: new Date(p.lastActivity),
+        });
+        loaded++;
+      }
+      if (loaded > 0) {
+        console.log(`[${new Date().toISOString()}] 📂 디스크에서 ${loaded}개 세션 복원됨`);
+      }
+    } catch (e) {
+      console.error(`[${new Date().toISOString()}] ⚠️ 세션 파일 로드 실패:`, e);
+    }
+  }
+
+  private saveToDisk(): void {
+    try {
+      const data: Record<string, PersistedSession> = {};
+      for (const [threadTs, s] of this.sessions) {
+        data[threadTs] = {
+          claudeSessionId: s.claudeSessionId,
+          hasBeenUsed: s.hasBeenUsed,
+          createdAt: s.createdAt.toISOString(),
+          lastActivity: s.lastActivity.toISOString(),
+        };
+      }
+      writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error(`[${new Date().toISOString()}] ⚠️ 세션 파일 저장 실패:`, e);
+    }
+  }
+
   /**
    * 스레드에 대한 세션을 가져오거나 새로 생성합니다.
    * @param threadTs 슬랙 스레드 타임스탬프 (없으면 메시지 ts 사용)
@@ -36,6 +92,7 @@ class SessionManager {
         lastActivity: new Date(),
       };
       this.sessions.set(threadTs, session);
+      this.saveToDisk();
       console.log(
         `[${new Date().toISOString()}] 🆕 새 세션 생성: ${session.claudeSessionId.substring(0, 12)}... (스레드: ${threadTs})`,
       );
@@ -49,6 +106,7 @@ class SessionManager {
     const session = this.sessions.get(threadTs);
     if (session) {
       session.hasBeenUsed = true;
+      this.saveToDisk();
     }
   }
 
@@ -83,11 +141,15 @@ class SessionManager {
    */
   cleanupOldSessions(maxAgeMs: number = 60 * 60 * 1000): void {
     const now = Date.now();
+    let deleted = 0;
     for (const [threadTs, session] of this.sessions) {
       if (now - session.lastActivity.getTime() > maxAgeMs) {
-        this.deleteSession(threadTs);
+        session.abortController.abort();
+        this.sessions.delete(threadTs);
+        deleted++;
       }
     }
+    if (deleted > 0) this.saveToDisk();
   }
 
   /**
